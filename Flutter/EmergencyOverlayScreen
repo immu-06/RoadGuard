@@ -1,0 +1,1075 @@
+import 'dart:async';
+
+import 'package:flutter/material.dart';
+import 'package:url_launcher/url_launcher.dart';
+
+import '../models/crash_model.dart';
+import '../widgets/crash_location_view.dart';
+import 'first_aid_screen.dart';
+import 'map_screen.dart';
+
+class EmergencyOverlayScreen extends StatefulWidget {
+  final CrashData? crash;
+
+  const EmergencyOverlayScreen({
+    super.key,
+    this.crash,
+  });
+
+  @override
+  State<EmergencyOverlayScreen> createState() =>
+      _EmergencyOverlayScreenState();
+}
+
+class _EmergencyOverlayScreenState
+    extends State<EmergencyOverlayScreen> {
+  Timer? _timer;
+
+  int _seconds = 0;
+
+  bool _helping = false;
+
+  // ============================================================
+  // START GOLDEN HOUR TIMER
+  // ============================================================
+
+  void _startHelping() {
+    setState(() {
+      _helping = true;
+      _seconds = 0;
+    });
+
+    _timer?.cancel();
+
+    _timer = Timer.periodic(
+      const Duration(seconds: 1),
+          (_) {
+        if (!mounted) return;
+
+        setState(() {
+          _seconds++;
+        });
+      },
+    );
+
+    // Immediately move to First Aid.
+    _openFirstAid();
+  }
+
+  // ============================================================
+  // OPEN FIRST AID
+  // ============================================================
+
+  void _openFirstAid() {
+    Navigator.of(context).push(
+      MaterialPageRoute(
+        builder: (_) => FirstAidScreen(
+          crash: widget.crash,
+          languageCode: 'en',
+        ),
+      ),
+    );
+  }
+
+  // ============================================================
+  // CALL 112
+  // ============================================================
+
+  Future<void> _call112() async {
+    final uri = Uri.parse('tel:112');
+
+    try {
+      await launchUrl(uri);
+    } catch (_) {
+      if (!mounted) return;
+
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text(
+            'Unable to open the phone dialer.',
+          ),
+        ),
+      );
+    }
+  }
+
+  // ============================================================
+  // CALL HOSPITAL
+  // ============================================================
+
+  Future<void> _callHospital() async {
+    final phone =
+        widget.crash?.nearestHospitalPhone;
+
+    if (phone == null || phone.isEmpty) {
+      return;
+    }
+
+    final uri = Uri.parse('tel:$phone');
+
+    try {
+      await launchUrl(uri);
+    } catch (_) {
+      if (!mounted) return;
+
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text(
+            'Unable to open the phone dialer.',
+          ),
+        ),
+      );
+    }
+  }
+
+  // ============================================================
+  // OPEN GOOGLE MAPS
+  // ============================================================
+
+  Future<void> _openMap() async {
+    final crash = widget.crash;
+
+    if (crash == null) {
+      return;
+    }
+
+    final uri = Uri.parse(
+      'https://maps.google.com/?q=${crash.lat},${crash.lng}',
+    );
+
+    try {
+      await launchUrl(
+        uri,
+        mode: LaunchMode.externalApplication,
+      );
+    } catch (_) {
+      if (!mounted) return;
+
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text(
+            'Unable to open maps.',
+          ),
+        ),
+      );
+    }
+  }
+
+  // ============================================================
+  // OPEN IN-APP OFFLINE MAP
+  // ============================================================
+
+  void _openOfflineMap() {
+    final crash = widget.crash;
+
+    if (crash == null) {
+      return;
+    }
+
+    Navigator.of(context).push(
+      MaterialPageRoute(
+        builder: (_) => MapScreen(
+          crashLatitude: crash.lat,
+          crashLongitude: crash.lng,
+          crashId: crash.crashId,
+        ),
+      ),
+    );
+  }
+
+  // ============================================================
+  // GOOD SAMARITAN RIGHTS
+  // ============================================================
+
+  void _showGoodSamaritanRights() {
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.white,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(
+          top: Radius.circular(28),
+        ),
+      ),
+      builder: (_) {
+        return SafeArea(
+          child: Padding(
+            padding: const EdgeInsets.all(24),
+            child: SingleChildScrollView(
+              child: Column(
+                crossAxisAlignment:
+                CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    children: [
+                      Container(
+                        padding:
+                        const EdgeInsets.all(12),
+                        decoration:
+                        const BoxDecoration(
+                          color: Color(0xFFE8F5E9),
+                          shape: BoxShape.circle,
+                        ),
+                        child: const Icon(
+                          Icons.shield_outlined,
+                          color: Color(0xFF2E7D32),
+                          size: 30,
+                        ),
+                      ),
+
+                      const SizedBox(width: 14),
+
+                      const Expanded(
+                        child: Text(
+                          'Good Samaritan Protection',
+                          style: TextStyle(
+                            fontSize: 21,
+                            fontWeight: FontWeight.bold,
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+
+                  const SizedBox(height: 20),
+
+                  const Text(
+                    'You can provide reasonable emergency assistance without being a medical professional.',
+                    style: TextStyle(
+                      fontSize: 16,
+                      height: 1.5,
+                    ),
+                  ),
+
+                  const SizedBox(height: 18),
+
+                  _RightsTile(
+                    icon: Icons.volunteer_activism,
+                    title: 'You can help',
+                    text:
+                    'You may assist an injured person when it is safe to do so.',
+                  ),
+
+                  _RightsTile(
+                    icon: Icons.gavel,
+                    title: 'Legal confidence',
+                    text:
+                    'The Good Samaritan framework is intended to reduce fear of unnecessary legal or procedural harassment when helping accident victims.',
+                  ),
+
+                  _RightsTile(
+                    icon: Icons.health_and_safety,
+                    title: 'Your safety comes first',
+                    text:
+                    'Do not enter a dangerous scene. Avoid traffic, fire, fuel leaks or other hazards.',
+                  ),
+
+                  _RightsTile(
+                    icon: Icons.medical_services,
+                    title: 'Follow the guidance',
+                    text:
+                    'Use the first-aid instructions provided by the app and wait for professional medical assistance.',
+                  ),
+
+                  const SizedBox(height: 10),
+
+                  Container(
+                    padding:
+                    const EdgeInsets.all(14),
+                    decoration: BoxDecoration(
+                      color: const Color(0xFFFFF3E0),
+                      borderRadius:
+                      BorderRadius.circular(14),
+                    ),
+                    child: const Row(
+                      crossAxisAlignment:
+                      CrossAxisAlignment.start,
+                      children: [
+                        Icon(
+                          Icons.info_outline,
+                          color:
+                          Color(0xFFE65100),
+                        ),
+
+                        SizedBox(width: 10),
+
+                        Expanded(
+                          child: Text(
+                            'This information is general guidance. Follow applicable law and instructions from emergency professionals.',
+                            style: TextStyle(
+                              fontSize: 13,
+                              color:
+                              Color(0xFFE65100),
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+
+                  const SizedBox(height: 20),
+
+                  SizedBox(
+                    width: double.infinity,
+                    child: ElevatedButton(
+                      onPressed: () =>
+                          Navigator.pop(context),
+                      child:
+                      const Text('UNDERSTAND'),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        );
+      },
+    );
+  }
+
+  // ============================================================
+  // FORMAT TIMER
+  // ============================================================
+
+  String _formatTime() {
+    final minutes = _seconds ~/ 60;
+    final seconds = _seconds % 60;
+
+    return '${minutes.toString().padLeft(2, '0')}:'
+        '${seconds.toString().padLeft(2, '0')}';
+  }
+
+  // ============================================================
+  // DISPOSE
+  // ============================================================
+
+  @override
+  void dispose() {
+    _timer?.cancel();
+
+    super.dispose();
+  }
+
+  // ============================================================
+  // BUILD
+  // ============================================================
+
+  @override
+  Widget build(BuildContext context) {
+    final crash = widget.crash;
+
+    return Scaffold(
+      body: Container(
+        decoration: const BoxDecoration(
+          gradient: LinearGradient(
+            begin: Alignment.topCenter,
+            end: Alignment.bottomCenter,
+            colors: [
+              Color(0xFFD32F2F),
+              Color(0xFF8B0000),
+            ],
+          ),
+        ),
+
+        child: SafeArea(
+          child: SingleChildScrollView(
+            padding: const EdgeInsets.all(20),
+
+            child: Column(
+              children: [
+                const SizedBox(height: 10),
+
+                // ==================================================
+                // WARNING ICON
+                // ==================================================
+
+                Container(
+                  padding:
+                  const EdgeInsets.all(18),
+
+                  decoration: BoxDecoration(
+                    color: Colors.white
+                        .withOpacity(0.15),
+                    shape: BoxShape.circle,
+                  ),
+
+                  child: const Icon(
+                    Icons.warning_amber_rounded,
+                    color: Colors.white,
+                    size: 70,
+                  ),
+                ),
+
+                const SizedBox(height: 18),
+
+                // ==================================================
+                // TITLE
+                // ==================================================
+
+                const Text(
+                  'CRASH DETECTED',
+                  style: TextStyle(
+                    color: Colors.white,
+                    fontSize: 29,
+                    fontWeight: FontWeight.w900,
+                    letterSpacing: 1.2,
+                  ),
+                  textAlign: TextAlign.center,
+                ),
+
+                const SizedBox(height: 8),
+
+                const Text(
+                  'A person nearby may need immediate help.',
+                  style: TextStyle(
+                    color: Colors.white70,
+                    fontSize: 15,
+                  ),
+                  textAlign: TextAlign.center,
+                ),
+
+                const SizedBox(height: 20),
+
+                // ==================================================
+                // CRASH DETAILS
+                // ==================================================
+
+                if (crash != null)
+                  Container(
+                    width: double.infinity,
+                    padding:
+                    const EdgeInsets.all(16),
+
+                    decoration: BoxDecoration(
+                      color: Colors.white
+                          .withOpacity(0.12),
+                      borderRadius:
+                      BorderRadius.circular(18),
+                    ),
+
+                    child: Column(
+                      children: [
+                        _InfoRow(
+                          icon: Icons.speed,
+                          label: 'Severity',
+                          value:
+                          '${crash.severity}/5',
+                        ),
+
+                        const SizedBox(height: 9),
+
+                        _InfoRow(
+                          icon: Icons.two_wheeler,
+                          label: 'Vehicle',
+                          value:
+                          crash.vehicleType,
+                        ),
+
+                        const SizedBox(height: 9),
+
+                        _InfoRow(
+                          icon: Icons.place,
+                          label: 'Location',
+                          value:
+                          crash.resolvedAddress ??
+                              '${crash.lat.toStringAsFixed(5)}, '
+                                  '${crash.lng.toStringAsFixed(5)}',
+                        ),
+
+                        if (crash
+                            .nearestHospitalName !=
+                            null) ...[
+                          const SizedBox(height: 9),
+
+                          _InfoRow(
+                            icon:
+                            Icons.local_hospital,
+                            label:
+                            'Nearest Hospital',
+                            value: crash
+                                .nearestHospitalName!,
+                          ),
+                        ],
+                      ],
+                    ),
+                  ),
+
+                const SizedBox(height: 18),
+
+                // ==================================================
+                // GOLDEN HOUR MESSAGE
+                // ==================================================
+
+                Container(
+                  width: double.infinity,
+                  padding:
+                  const EdgeInsets.all(16),
+
+                  decoration: BoxDecoration(
+                    color: Colors.white,
+                    borderRadius:
+                    BorderRadius.circular(18),
+                  ),
+
+                  child: Column(
+                    children: [
+                      const Icon(
+                        Icons.timer,
+                        color:
+                        Color(0xFFD32F2F),
+                        size: 38,
+                      ),
+
+                      const SizedBox(height: 8),
+
+                      const Text(
+                        'THE GOLDEN HOUR MATTERS',
+                        style: TextStyle(
+                          fontWeight:
+                          FontWeight.w900,
+                          fontSize: 16,
+                          color:
+                          Color(0xFFD32F2F),
+                        ),
+                      ),
+
+                      const SizedBox(height: 5),
+
+                      const Text(
+                        'Your immediate action can help the injured person before professional help arrives.',
+                        textAlign:
+                        TextAlign.center,
+                        style: TextStyle(
+                          fontSize: 13,
+                          color: Colors.black87,
+                          height: 1.4,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+
+                const SizedBox(height: 18),
+
+                // ==================================================
+                // I'M GOING TO HELP
+                // ==================================================
+
+                SizedBox(
+                  width: double.infinity,
+
+                  child:
+                  ElevatedButton.icon(
+                    onPressed: _startHelping,
+
+                    icon: const Icon(
+                      Icons.volunteer_activism,
+                      size: 27,
+                    ),
+
+                    label: const Text(
+                      "I'M GOING TO HELP",
+                      style: TextStyle(
+                        fontSize: 18,
+                        fontWeight:
+                        FontWeight.w900,
+                      ),
+                    ),
+
+                    style:
+                    ElevatedButton.styleFrom(
+                      backgroundColor:
+                      Colors.white,
+                      foregroundColor:
+                      const Color(0xFFD32F2F),
+
+                      padding:
+                      const EdgeInsets.symmetric(
+                        vertical: 18,
+                      ),
+
+                      shape:
+                      RoundedRectangleBorder(
+                        borderRadius:
+                        BorderRadius.circular(
+                          16,
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
+
+                const SizedBox(height: 12),
+
+                // ==================================================
+                // CALL 112
+                // ==================================================
+
+                SizedBox(
+                  width: double.infinity,
+
+                  child:
+                  ElevatedButton.icon(
+                    onPressed: _call112,
+
+                    icon: const Icon(
+                      Icons.phone_in_talk,
+                    ),
+
+                    label: const Text(
+                      'CALL 112',
+                      style: TextStyle(
+                        fontSize: 16,
+                        fontWeight:
+                        FontWeight.bold,
+                      ),
+                    ),
+
+                    style:
+                    ElevatedButton.styleFrom(
+                      backgroundColor:
+                      const Color(0xFF2E7D32),
+                      foregroundColor:
+                      Colors.white,
+
+                      padding:
+                      const EdgeInsets.symmetric(
+                        vertical: 15,
+                      ),
+
+                      shape:
+                      RoundedRectangleBorder(
+                        borderRadius:
+                        BorderRadius.circular(
+                          15,
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
+
+                const SizedBox(height: 12),
+
+                // ==================================================
+                // LOCATION BUTTONS
+                // ==================================================
+
+                if (crash != null) ...[
+                  // ------------------------------------------------
+                  // GOOGLE MAPS
+                  // ------------------------------------------------
+
+                  SizedBox(
+                    width: double.infinity,
+
+                    child:
+                    OutlinedButton.icon(
+                      onPressed: _openMap,
+
+                      icon: const Icon(
+                        Icons.map,
+                      ),
+
+                      label: const Text(
+                        'VIEW IN GOOGLE MAPS',
+                        style: TextStyle(
+                          fontWeight:
+                          FontWeight.bold,
+                        ),
+                      ),
+
+                      style:
+                      OutlinedButton.styleFrom(
+                        foregroundColor:
+                        Colors.white,
+
+                        side:
+                        const BorderSide(
+                          color: Colors.white70,
+                        ),
+
+                        padding:
+                        const EdgeInsets.symmetric(
+                          vertical: 14,
+                        ),
+
+                        shape:
+                        RoundedRectangleBorder(
+                          borderRadius:
+                          BorderRadius.circular(
+                            15,
+                          ),
+                        ),
+                      ),
+                    ),
+                  ),
+
+                  const SizedBox(height: 10),
+
+                  // ------------------------------------------------
+                  // IN-APP OFFLINE MAP
+                  // ------------------------------------------------
+
+                  SizedBox(
+                    width: double.infinity,
+
+                    child:
+                    OutlinedButton.icon(
+                      onPressed:
+                      _openOfflineMap,
+
+                      icon: const Icon(
+                        Icons.location_on,
+                      ),
+
+                      label: const Text(
+                        'VIEW IN OFFLINE MAP',
+                        style: TextStyle(
+                          fontWeight:
+                          FontWeight.bold,
+                        ),
+                      ),
+
+                      style:
+                      OutlinedButton.styleFrom(
+                        foregroundColor:
+                        Colors.white,
+
+                        side:
+                        const BorderSide(
+                          color: Colors.white70,
+                        ),
+
+                        padding:
+                        const EdgeInsets.symmetric(
+                          vertical: 14,
+                        ),
+
+                        shape:
+                        RoundedRectangleBorder(
+                          borderRadius:
+                          BorderRadius.circular(
+                            15,
+                          ),
+                        ),
+                      ),
+                    ),
+                  ),
+                ],
+
+                // ==================================================
+                // HOSPITAL
+                // ==================================================
+
+                if (crash?.nearestHospitalPhone !=
+                    null) ...[
+                  const SizedBox(height: 12),
+
+                  SizedBox(
+                    width: double.infinity,
+
+                    child:
+                    OutlinedButton.icon(
+                      onPressed:
+                      _callHospital,
+
+                      icon: const Icon(
+                        Icons.local_hospital,
+                      ),
+
+                      label: const Text(
+                        'CALL NEAREST HOSPITAL',
+                      ),
+
+                      style:
+                      OutlinedButton.styleFrom(
+                        foregroundColor:
+                        Colors.white,
+
+                        side:
+                        const BorderSide(
+                          color: Colors.white70,
+                        ),
+
+                        padding:
+                        const EdgeInsets.symmetric(
+                          vertical: 14,
+                        ),
+
+                        shape:
+                        RoundedRectangleBorder(
+                          borderRadius:
+                          BorderRadius.circular(
+                            15,
+                          ),
+                        ),
+                      ),
+                    ),
+                  ),
+                ],
+
+                const SizedBox(height: 12),
+
+                // ==================================================
+                // GOOD SAMARITAN RIGHTS
+                // ==================================================
+
+                OutlinedButton.icon(
+                  onPressed:
+                  _showGoodSamaritanRights,
+
+                  icon: const Icon(
+                    Icons.shield_outlined,
+                  ),
+
+                  label: const Text(
+                    'MY GOOD SAMARITAN RIGHTS',
+                  ),
+
+                  style:
+                  OutlinedButton.styleFrom(
+                    foregroundColor:
+                    Colors.white,
+
+                    side:
+                    const BorderSide(
+                      color: Colors.white70,
+                    ),
+
+                    padding:
+                    const EdgeInsets.symmetric(
+                      vertical: 14,
+                      horizontal: 20,
+                    ),
+
+                    shape:
+                    RoundedRectangleBorder(
+                      borderRadius:
+                      BorderRadius.circular(
+                        15,
+                      ),
+                    ),
+                  ),
+                ),
+
+                const SizedBox(height: 20),
+
+                // ==================================================
+                // HELPING STATUS
+                // ==================================================
+
+                if (_helping)
+                  Container(
+                    width: double.infinity,
+
+                    padding:
+                    const EdgeInsets.all(16),
+
+                    decoration: BoxDecoration(
+                      color: Colors.white
+                          .withOpacity(0.15),
+                      borderRadius:
+                      BorderRadius.circular(18),
+                    ),
+
+                    child: Column(
+                      children: [
+                        const Icon(
+                          Icons.volunteer_activism,
+                          color: Colors.white,
+                          size: 32,
+                        ),
+
+                        const SizedBox(height: 8),
+
+                        const Text(
+                          'YOU ARE HELPING',
+                          style: TextStyle(
+                            color: Colors.white,
+                            fontSize: 18,
+                            fontWeight:
+                            FontWeight.w900,
+                          ),
+                        ),
+
+                        const SizedBox(height: 4),
+
+                        Text(
+                          'Assistance time: '
+                              '${_formatTime()}',
+                          style:
+                          const TextStyle(
+                            color: Colors.white70,
+                            fontSize: 14,
+                          ),
+                        ),
+
+                        const SizedBox(height: 6),
+
+                        const Text(
+                          'Stay safe and remain with the victim until professional help arrives.',
+                          textAlign:
+                          TextAlign.center,
+                          style: TextStyle(
+                            color: Colors.white70,
+                            fontSize: 12,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+
+                const SizedBox(height: 15),
+
+                // ==================================================
+                // LOCATION VIEW
+                // ==================================================
+
+                if (crash != null)
+                  CrashLocationView(
+                    crashLatitude:
+                    crash.lat,
+                    crashLongitude:
+                    crash.lng,
+                  ),
+
+                const SizedBox(height: 20),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+// ================================================================
+// INFO ROW
+// ================================================================
+
+class _InfoRow extends StatelessWidget {
+  final IconData icon;
+  final String label;
+  final String value;
+
+  const _InfoRow({
+    required this.icon,
+    required this.label,
+    required this.value,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Row(
+      children: [
+        Icon(
+          icon,
+          color: Colors.white70,
+          size: 19,
+        ),
+
+        const SizedBox(width: 8),
+
+        Text(
+          '$label: ',
+          style: const TextStyle(
+            color: Colors.white70,
+            fontSize: 14,
+          ),
+        ),
+
+        Expanded(
+          child: Text(
+            value,
+            style: const TextStyle(
+              color: Colors.white,
+              fontSize: 14,
+              fontWeight: FontWeight.bold,
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+// ================================================================
+// GOOD SAMARITAN TILE
+// ================================================================
+
+class _RightsTile extends StatelessWidget {
+  final IconData icon;
+  final String title;
+  final String text;
+
+  const _RightsTile({
+    required this.icon,
+    required this.title,
+    required this.text,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding:
+      const EdgeInsets.only(bottom: 14),
+
+      child: Row(
+        crossAxisAlignment:
+        CrossAxisAlignment.start,
+
+        children: [
+          Container(
+            padding:
+            const EdgeInsets.all(9),
+
+            decoration: BoxDecoration(
+              color:
+              const Color(0xFFE8F5E9),
+              borderRadius:
+              BorderRadius.circular(10),
+            ),
+
+            child: Icon(
+              icon,
+              color:
+              const Color(0xFF2E7D32),
+              size: 22,
+            ),
+          ),
+
+          const SizedBox(width: 12),
+
+          Expanded(
+            child: Column(
+              crossAxisAlignment:
+              CrossAxisAlignment.start,
+
+              children: [
+                Text(
+                  title,
+                  style: const TextStyle(
+                    fontWeight:
+                    FontWeight.bold,
+                    fontSize: 15,
+                  ),
+                ),
+
+                const SizedBox(height: 3),
+
+                Text(
+                  text,
+                  style: const TextStyle(
+                    fontSize: 13,
+                    height: 1.4,
+                    color: Colors.black87,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
