@@ -1,0 +1,120 @@
+import 'package:flutter/material.dart';
+import 'package:video_player/video_player.dart';
+
+class FirstAidVideoPlayer extends StatefulWidget {
+  final String assetPath;
+
+  const FirstAidVideoPlayer({
+    super.key,
+    required this.assetPath,
+  });
+
+  @override
+  State<FirstAidVideoPlayer> createState() =>
+      _FirstAidVideoPlayerState();
+}
+
+class _FirstAidVideoPlayerState extends State<FirstAidVideoPlayer> {
+  late VideoPlayerController _controller;
+  bool _ready = false;
+  String? _error;
+
+  @override
+  void initState() {
+    super.initState();
+    _initialize();
+  }
+
+  Future<void> _initialize() async {
+    try {
+      _controller = VideoPlayerController.asset(widget.assetPath);
+      await _controller.initialize();
+
+      if (!mounted) return;
+
+      setState(() {
+        _ready = true;
+      });
+
+      await _controller.setLooping(false);
+    } catch (e) {
+      if (!mounted) return;
+
+      setState(() {
+        _error = 'Unable to load offline video.';
+      });
+    }
+  }
+
+  @override
+  void dispose() {
+    if (_ready) {
+      _controller.dispose();
+    }
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    if (_error != null) {
+      return Container(
+        height: 220,
+        alignment: Alignment.center,
+        color: Colors.black12,
+        child: Text(_error!),
+      );
+    }
+
+    if (!_ready) {
+      return const SizedBox(
+        height: 220,
+        child: Center(
+          child: CircularProgressIndicator(),
+        ),
+      );
+    }
+
+    return Column(
+      children: [
+        ClipRRect(
+          borderRadius: BorderRadius.circular(16),
+          child: AspectRatio(
+            aspectRatio: _controller.value.aspectRatio,
+            child: VideoPlayer(_controller),
+          ),
+        ),
+        const SizedBox(height: 8),
+        Row(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            IconButton.filled(
+              icon: Icon(
+                _controller.value.isPlaying
+                    ? Icons.pause
+                    : Icons.play_arrow,
+              ),
+              onPressed: () {
+                setState(() {
+                  if (_controller.value.isPlaying) {
+                    _controller.pause();
+                  } else {
+                    _controller.play();
+                  }
+                });
+              },
+            ),
+            const SizedBox(width: 8),
+            IconButton(
+              icon: const Icon(Icons.replay),
+              onPressed: () {
+                _controller.seekTo(Duration.zero);
+                _controller.play();
+                setState(() {});
+              },
+            ),
+          ],
+        ),
+      ],
+    );
+  }
+}
