@@ -1,0 +1,48 @@
+class FirstAidContent {
+  final String id;
+  final String title;
+  final Map<String, String> videos;
+  final List<String> images;
+  final String? animation;
+  final List<String> steps;
+
+  const FirstAidContent({
+    required this.id,
+    required this.title,
+    required this.videos,
+    required this.images,
+    required this.animation,
+    required this.steps,
+  });
+
+  factory FirstAidContent.fromJson(
+      String id,
+      Map<String, dynamic> json,
+      ) {
+    return FirstAidContent(
+      id: id,
+
+      title: json['title'] ?? id,
+
+      videos: Map<String, String>.from(
+        json['video'] ?? {},
+      ),
+
+      images: List<String>.from(
+        json['images'] ?? [],
+      ),
+
+      animation: json['animation'],
+
+      steps: List<String>.from(
+        json['steps'] ?? [],
+      ),
+    );
+  }
+
+  String getVideo(String languageCode) {
+    return videos[languageCode] ??
+        videos['en'] ??
+        '';
+  }
+}
