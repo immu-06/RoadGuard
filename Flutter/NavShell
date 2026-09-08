@@ -1,0 +1,59 @@
+import 'package:flutter/material.dart';
+import 'home_screen.dart';
+import 'first_aid_screen.dart';
+import 'resources_screen.dart';
+import 'dashboard_screen.dart';
+import 'map_screen.dart';
+
+class NavShell extends StatefulWidget {
+  const NavShell({super.key});
+
+  @override
+  State<NavShell> createState() => _NavShellState();
+}
+
+class _NavShellState extends State<NavShell> {
+  int _currentIndex = 0;
+
+  final List<Widget> _screens = [
+    const HomeScreen(),
+    const FirstAidScreen(),
+    const ResourcesScreen(),
+    const DashboardScreen(),
+    const MapScreen(),
+  ];
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      body: _screens[_currentIndex],
+      bottomNavigationBar: BottomNavigationBar(
+        currentIndex: _currentIndex,
+        onTap: (index) => setState(() => _currentIndex = index),
+        type: BottomNavigationBarType.fixed,
+        items: const [
+          BottomNavigationBarItem(
+            icon: Icon(Icons.home),
+            label: 'Home',
+          ),
+          BottomNavigationBarItem(
+            icon: Icon(Icons.medical_services),
+            label: 'First Aid',
+          ),
+          BottomNavigationBarItem(
+            icon: Icon(Icons.info_outline),
+            label: 'Resources',
+          ),
+          BottomNavigationBarItem(
+            icon: Icon(Icons.dashboard),
+            label: 'Dashboard',
+          ),
+          BottomNavigationBarItem(
+            icon: Icon(Icons.map),
+            label: 'Map',
+          ),
+        ],
+      ),
+    );
+  }
+}
