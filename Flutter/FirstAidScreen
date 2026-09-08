@@ -1,0 +1,1184 @@
+import 'package:flutter/material.dart';
+import 'package:video_player/video_player.dart';
+
+import '../models/crash_model.dart';
+
+class FirstAidScreen extends StatefulWidget {
+  final CrashData? crash;
+  final String languageCode;
+
+  const FirstAidScreen({
+    super.key,
+    this.crash,
+    this.languageCode = 'en',
+  });
+
+  @override
+  State<FirstAidScreen> createState() => _FirstAidScreenState();
+}
+
+class _FirstAidScreenState extends State<FirstAidScreen> {
+  late String _language;
+
+  @override
+  void initState() {
+    super.initState();
+    _language = widget.languageCode;
+  }
+
+  // ============================================================
+  // DETERMINE GUIDE FROM CRASH SEVERITY
+  // ============================================================
+
+  String _guideForCrash() {
+    final severity = widget.crash?.severity;
+
+    if (severity == null) {
+      return 'moderate';
+    }
+
+    if (severity <= 2) {
+      return 'minor';
+    }
+
+    if (severity == 3) {
+      return 'moderate';
+    }
+
+    return 'critical';
+  }
+
+  // ============================================================
+  // FIRST-AID GUIDES
+  // ============================================================
+
+  static const List<Map<String, dynamic>> _guides = [
+    {
+      'id': 'minor',
+      'level': 'Minor Injuries',
+      'range': 'Severity 1-2',
+      'color': Color(0xFF66BB6A),
+      'bgColor': Color(0xFFE8F5E9),
+      'icon': Icons.healing,
+
+      'video_en':
+      'assets/first_aid/videos/bleeding_control_en_voice.mp4',
+      'video_ta':
+      'assets/first_aid/videos/bleeding_control_ta.mp4',
+
+      'images': [
+        'assets/first_aid/images/bleeding_step1.png',
+        'assets/first_aid/images/bleeding_step2.png',
+      ],
+
+      'animation':
+      'assets/first_aid/animations/bleeding_control.gif',
+
+      'steps_en': [
+        {
+          'icon': Icons.shield_outlined,
+          'text':
+          'Ensure the scene is safe before approaching the injured person.',
+        },
+        {
+          'icon': Icons.sentiment_satisfied_alt,
+          'text':
+          'Reassure the person and keep them calm and still.',
+        },
+        {
+          'icon': Icons.water_drop_outlined,
+          'text':
+          'Clean visible minor cuts or scrapes with clean water if it is safe to do so.',
+        },
+        {
+          'icon': Icons.medical_information_outlined,
+          'text':
+          'Apply a clean cloth to bleeding and use gentle pressure.',
+        },
+        {
+          'icon': Icons.pan_tool_outlined,
+          'text':
+          'Do not move the injured person unnecessarily.',
+        },
+        {
+          'icon': Icons.phone_in_talk,
+          'text':
+          'If the condition becomes serious, call emergency services on 112.',
+        },
+      ],
+
+      'steps_ta': [
+        {
+          'icon': Icons.shield_outlined,
+          'text':
+          'காயமடைந்தவரை அணுகுவதற்கு முன் விபத்து நடந்த இடம் பாதுகாப்பானதா என்பதை உறுதி செய்யவும்.',
+        },
+        {
+          'icon': Icons.sentiment_satisfied_alt,
+          'text':
+          'காயமடைந்தவரை அமைதியாக இருக்கச் செய்யவும்.',
+        },
+        {
+          'icon': Icons.water_drop_outlined,
+          'text':
+          'சிறிய காயங்கள் இருந்தால் பாதுகாப்பாக இருக்கும் பட்சத்தில் சுத்தமான நீரால் சுத்தம் செய்யவும்.',
+        },
+        {
+          'icon': Icons.medical_information_outlined,
+          'text':
+          'இரத்தப்போக்கு இருந்தால் சுத்தமான துணியால் மெதுவாக அழுத்தம் கொடுக்கவும்.',
+        },
+        {
+          'icon': Icons.pan_tool_outlined,
+          'text':
+          'தேவையில்லாமல் காயமடைந்தவரை நகர்த்த வேண்டாம்.',
+        },
+        {
+          'icon': Icons.phone_in_talk,
+          'text':
+          'நிலை மோசமடைந்தால் 112 அவசர சேவையை அழைக்கவும்.',
+        },
+      ],
+    },
+
+    // ==========================================================
+    // MODERATE
+    // ==========================================================
+
+    {
+      'id': 'moderate',
+      'level': 'Moderate Injuries',
+      'range': 'Severity 3',
+      'color': Color(0xFFFFA726),
+      'bgColor': Color(0xFFFFF3E0),
+      'icon': Icons.local_hospital_outlined,
+
+      'video_en':
+      'assets/first_aid/videos/shock_en_voice.mp4',
+      'video_ta':
+      'assets/first_aid/videos/shock_ta.mp4',
+
+      'images': [
+        'assets/first_aid/images/shock_step1.png',
+        'assets/first_aid/images/shock_step2.png',
+      ],
+
+      'animation':
+      'assets/first_aid/animations/shock_care.gif',
+
+      'steps_en': [
+        {
+          'icon': Icons.call,
+          'text':
+          'Call emergency services immediately — 112 in India.',
+        },
+        {
+          'icon': Icons.block,
+          'text':
+          'Do not move the victim unless there is immediate danger.',
+        },
+        {
+          'icon': Icons.favorite_outline,
+          'text':
+          'Check whether the person is responsive and breathing normally.',
+        },
+        {
+          'icon': Icons.healing,
+          'text':
+          'Apply firm, steady pressure to significant bleeding.',
+        },
+        {
+          'icon': Icons.ac_unit,
+          'text':
+          'Keep the person warm and still while waiting for help.',
+        },
+        {
+          'icon': Icons.no_food,
+          'text':
+          'Do not give food or water to the injured person.',
+        },
+      ],
+
+      'steps_ta': [
+        {
+          'icon': Icons.call,
+          'text':
+          'உடனடியாக 112 அவசர சேவையை அழைக்கவும்.',
+        },
+        {
+          'icon': Icons.block,
+          'text':
+          'உடனடி ஆபத்து இல்லையெனில் காயமடைந்தவரை நகர்த்த வேண்டாம்.',
+        },
+        {
+          'icon': Icons.favorite_outline,
+          'text':
+          'நபர் பதிலளிக்கிறாரா மற்றும் இயல்பாக சுவாசிக்கிறாரா என்பதைச் சரிபார்க்கவும்.',
+        },
+        {
+          'icon': Icons.healing,
+          'text':
+          'கடுமையான இரத்தப்போக்கு இருந்தால் உறுதியான அழுத்தம் கொடுக்கவும்.',
+        },
+        {
+          'icon': Icons.ac_unit,
+          'text':
+          'உதவி வரும் வரை நபரை வெப்பமாகவும் அமைதியாகவும் வைத்திருக்கவும்.',
+        },
+        {
+          'icon': Icons.no_food,
+          'text':
+          'காயமடைந்தவருக்கு உணவு அல்லது தண்ணீர் கொடுக்க வேண்டாம்.',
+        },
+      ],
+    },
+
+    // ==========================================================
+    // CRITICAL
+    // ==========================================================
+
+    {
+      'id': 'critical',
+      'level': 'Severe / Critical',
+      'range': 'Severity 4-5',
+      'color': Color(0xFFEF5350),
+      'bgColor': Color(0xFFFFEBEE),
+      'icon': Icons.emergency,
+
+      'video_en':
+      'assets/first_aid/videos/cpr_en_voice.mp4',
+      'video_ta':
+      'assets/first_aid/videos/cpr_ta.mp4',
+
+      'images': [
+        'assets/first_aid/images/cpr_step1.png',
+        'assets/first_aid/images/cpr_step2.png',
+        'assets/first_aid/images/cpr_step3.png',
+        'assets/first_aid/images/cpr_step4.png',
+        'assets/first_aid/images/cpr_step5.png',
+      ],
+
+      'animation':
+      'assets/first_aid/animations/cpr_animation.gif',
+
+      'steps_en': [
+        {
+          'icon': Icons.call,
+          'text':
+          'Call 112 immediately and clearly state that it is a road accident.',
+        },
+        {
+          'icon': Icons.dangerous_outlined,
+          'text':
+          'Do not move the victim unnecessarily because there may be a spinal injury.',
+        },
+        {
+          'icon': Icons.visibility_outlined,
+          'text':
+          'If the person is unresponsive, check whether they are breathing normally.',
+        },
+        {
+          'icon': Icons.favorite,
+          'text':
+          'If the person is not breathing normally, begin CPR if you are trained.',
+        },
+        {
+          'icon': Icons.bloodtype_outlined,
+          'text':
+          'Control severe external bleeding using firm direct pressure.',
+        },
+        {
+          'icon': Icons.timer_outlined,
+          'text':
+          'Remember the approximate incident time and tell the medical team.',
+        },
+      ],
+
+      'steps_ta': [
+        {
+          'icon': Icons.call,
+          'text':
+          'உடனடியாக 112 ஐ அழைத்து இது சாலை விபத்து என்பதைத் தெரிவிக்கவும்.',
+        },
+        {
+          'icon': Icons.dangerous_outlined,
+          'text':
+          'முதுகுத்தண்டு காயம் இருக்கக்கூடும் என்பதால் தேவையில்லாமல் நபரை நகர்த்த வேண்டாம்.',
+        },
+        {
+          'icon': Icons.visibility_outlined,
+          'text':
+          'நபர் பதிலளிக்கவில்லை என்றால் அவர் இயல்பாக சுவாசிக்கிறாரா என்பதைச் சரிபார்க்கவும்.',
+        },
+        {
+          'icon': Icons.favorite,
+          'text':
+          'நபர் இயல்பாக சுவாசிக்கவில்லை என்றால், பயிற்சி பெற்றிருந்தால் CPR தொடங்கவும்.',
+        },
+        {
+          'icon': Icons.bloodtype_outlined,
+          'text':
+          'கடுமையான வெளிப்புற இரத்தப்போக்கை உறுதியான நேரடி அழுத்தம் மூலம் கட்டுப்படுத்தவும்.',
+        },
+        {
+          'icon': Icons.timer_outlined,
+          'text':
+          'விபத்து நடந்த நேரத்தை நினைவில் வைத்து மருத்துவக் குழுவிடம் தெரிவிக்கவும்.',
+        },
+      ],
+    },
+  ];
+
+  // ============================================================
+  // BUILD
+  // ============================================================
+
+  @override
+  Widget build(BuildContext context) {
+    final selectedId = _guideForCrash();
+
+    return Scaffold(
+      body: CustomScrollView(
+        slivers: [
+          SliverAppBar(
+            expandedHeight: 145,
+            pinned: true,
+            backgroundColor: const Color(0xFF26A69A),
+
+            actions: [
+              PopupMenuButton<String>(
+                icon: const Icon(
+                  Icons.language,
+                  color: Colors.white,
+                ),
+                onSelected: (value) {
+                  setState(() {
+                    _language = value;
+                  });
+                },
+                itemBuilder: (_) => const [
+                  PopupMenuItem(
+                    value: 'en',
+                    child: Text('🇬🇧 English'),
+                  ),
+                  PopupMenuItem(
+                    value: 'ta',
+                    child: Text('🇮🇳 தமிழ்'),
+                  ),
+                ],
+              ),
+            ],
+
+            flexibleSpace: FlexibleSpaceBar(
+              titlePadding:
+              const EdgeInsets.only(
+                left: 20,
+                bottom: 16,
+              ),
+              title: const Text(
+                'First Aid Guidance',
+                style: TextStyle(
+                  color: Colors.white,
+                  fontSize: 18,
+                  fontWeight: FontWeight.bold,
+                ),
+              ),
+              background: Container(
+                decoration:
+                const BoxDecoration(
+                  gradient: LinearGradient(
+                    begin: Alignment.topLeft,
+                    end: Alignment.bottomRight,
+                    colors: [
+                      Color(0xFF26A69A),
+                      Color(0xFF4DB6AC),
+                    ],
+                  ),
+                ),
+              ),
+            ),
+          ),
+
+          SliverToBoxAdapter(
+            child: Padding(
+              padding: const EdgeInsets.all(16),
+              child: Column(
+                crossAxisAlignment:
+                CrossAxisAlignment.stretch,
+                children: [
+
+                  // ==================================================
+                  // OFFLINE BANNER
+                  // ==================================================
+
+                  Container(
+                    padding:
+                    const EdgeInsets.all(15),
+                    decoration: BoxDecoration(
+                      color:
+                      const Color(0xFFE8F5E9),
+                      borderRadius:
+                      BorderRadius.circular(16),
+                      border: Border.all(
+                        color:
+                        const Color(0xFF81C784),
+                      ),
+                    ),
+                    child: Row(
+                      children: [
+                        const Icon(
+                          Icons.offline_bolt,
+                          color:
+                          Color(0xFF2E7D32),
+                        ),
+                        const SizedBox(width: 10),
+                        Expanded(
+                          child: Text(
+                            _language == 'en'
+                                ? 'Offline First Aid — videos, images and guidance work without Internet.'
+                                : 'ஆஃப்லைன் முதலுதவி — இணையம் இல்லாமலும் வீடியோக்கள், படங்கள் மற்றும் வழிகாட்டுதல் செயல்படும்.',
+                            style:
+                            const TextStyle(
+                              fontSize: 13,
+                              color:
+                              Color(0xFF2E7D32),
+                              fontWeight:
+                              FontWeight.w600,
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+
+                  const SizedBox(height: 14),
+
+                  // ==================================================
+                  // CRASH CONTEXT
+                  // ==================================================
+
+                  if (widget.crash != null)
+                    Container(
+                      padding:
+                      const EdgeInsets.all(15),
+                      decoration: BoxDecoration(
+                        color:
+                        const Color(0xFFFFF3E0),
+                        borderRadius:
+                        BorderRadius.circular(16),
+                      ),
+                      child: Row(
+                        children: [
+                          const Icon(
+                            Icons.warning_amber_rounded,
+                            color:
+                            Color(0xFFE65100),
+                            size: 28,
+                          ),
+                          const SizedBox(width: 10),
+                          Expanded(
+                            child: Text(
+                              _language == 'en'
+                                  ? 'Guidance selected automatically for Severity ${widget.crash!.severity}/5.'
+                                  : 'Severity ${widget.crash!.severity}/5 க்கான வழிகாட்டுதல் தானாகத் தேர்ந்தெடுக்கப்பட்டது.',
+                              style:
+                              const TextStyle(
+                                color:
+                                Color(0xFFE65100),
+                                fontWeight:
+                                FontWeight.bold,
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+
+                  const SizedBox(height: 20),
+
+                  // ==================================================
+                  // GUIDE CARDS
+                  // ==================================================
+
+                  ..._guides.map(
+                        (guide) => _SeverityCard(
+                      guide: guide,
+                      language: _language,
+                      initiallyExpanded:
+                      guide['id'] == selectedId,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+// ================================================================
+// SEVERITY CARD
+// ================================================================
+
+class _SeverityCard extends StatefulWidget {
+  final Map<String, dynamic> guide;
+  final String language;
+  final bool initiallyExpanded;
+
+  const _SeverityCard({
+    required this.guide,
+    required this.language,
+    required this.initiallyExpanded,
+  });
+
+  @override
+  State<_SeverityCard> createState() =>
+      _SeverityCardState();
+}
+
+class _SeverityCardState
+    extends State<_SeverityCard> {
+
+  late bool _expanded;
+
+  @override
+  void initState() {
+    super.initState();
+
+    _expanded =
+        widget.initiallyExpanded;
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final color =
+    widget.guide['color'] as Color;
+
+    final bgColor =
+    widget.guide['bgColor'] as Color;
+
+    final steps =
+    widget.language == 'ta'
+        ? List<Map<String, dynamic>>.from(
+      widget.guide['steps_ta'],
+    )
+        : List<Map<String, dynamic>>.from(
+      widget.guide['steps_en'],
+    );
+
+    final videoPath =
+    widget.language == 'ta'
+        ? widget.guide['video_ta']
+    as String
+        : widget.guide['video_en']
+    as String;
+
+    final images =
+    List<String>.from(
+      widget.guide['images'],
+    );
+
+    final animation =
+    widget.guide['animation'] as String;
+
+    return Container(
+      margin:
+      const EdgeInsets.only(bottom: 14),
+      decoration: BoxDecoration(
+        color: bgColor,
+        borderRadius:
+        BorderRadius.circular(20),
+        border: Border.all(
+          color: color.withOpacity(0.3),
+          width: 1.5,
+        ),
+      ),
+      child: Column(
+        children: [
+
+          // ======================================================
+          // HEADER
+          // ======================================================
+
+          InkWell(
+            borderRadius:
+            BorderRadius.circular(20),
+            onTap: () {
+              setState(() {
+                _expanded = !_expanded;
+              });
+            },
+            child: Padding(
+              padding:
+              const EdgeInsets.all(16),
+              child: Row(
+                children: [
+
+                  Container(
+                    padding:
+                    const EdgeInsets.all(12),
+                    decoration: BoxDecoration(
+                      color: color,
+                      shape: BoxShape.circle,
+                    ),
+                    child: Icon(
+                      widget.guide['icon']
+                      as IconData,
+                      color: Colors.white,
+                    ),
+                  ),
+
+                  const SizedBox(width: 14),
+
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment:
+                      CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          widget.guide['level']
+                          as String,
+                          style: TextStyle(
+                            color: color,
+                            fontWeight:
+                            FontWeight.bold,
+                            fontSize: 16,
+                          ),
+                        ),
+                        Text(
+                          widget.guide['range']
+                          as String,
+                          style: TextStyle(
+                            color:
+                            color.withOpacity(
+                              0.8,
+                            ),
+                            fontSize: 12,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+
+                  Icon(
+                    _expanded
+                        ? Icons.expand_less
+                        : Icons.expand_more,
+                    color: color,
+                  ),
+                ],
+              ),
+            ),
+          ),
+
+          // ======================================================
+          // EXPANDED
+          // ======================================================
+
+          if (_expanded)
+            Padding(
+              padding:
+              const EdgeInsets.fromLTRB(
+                16,
+                0,
+                16,
+                16,
+              ),
+              child: Column(
+                crossAxisAlignment:
+                CrossAxisAlignment.stretch,
+                children: [
+
+                  const Divider(),
+
+                  const SizedBox(height: 10),
+
+                  // ==================================================
+                  // VIDEO
+                  // ==================================================
+
+                  Text(
+                    widget.language == 'en'
+                        ? '🎥 First-Aid Video'
+                        : '🎥 முதலுதவி வீடியோ',
+                    style: TextStyle(
+                      fontSize: 18,
+                      fontWeight:
+                      FontWeight.bold,
+                      color: color,
+                    ),
+                  ),
+
+                  const SizedBox(height: 10),
+
+                  _OfflineVideoPlayer(
+                    assetPath: videoPath,
+                  ),
+
+                  const SizedBox(height: 18),
+
+                  // ==================================================
+                  // ANIMATION
+                  // ==================================================
+
+                  Text(
+                    widget.language == 'en'
+                        ? '🎞️ Visual Animation'
+                        : '🎞️ காட்சி அனிமேஷன்',
+                    style: TextStyle(
+                      fontSize: 18,
+                      fontWeight:
+                      FontWeight.bold,
+                      color: color,
+                    ),
+                  ),
+
+                  const SizedBox(height: 10),
+
+                  Container(
+                    height: 180,
+                    width: double.infinity,
+                    padding:
+                    const EdgeInsets.all(8),
+                    decoration: BoxDecoration(
+                      color: Colors.white,
+                      borderRadius:
+                      BorderRadius.circular(16),
+                    ),
+                    child: Image.asset(
+                      animation,
+                      fit: BoxFit.contain,
+                      errorBuilder:
+                          (_, __, ___) {
+                        return const Center(
+                          child: Text(
+                            'Animation unavailable',
+                          ),
+                        );
+                      },
+                    ),
+                  ),
+
+                  const SizedBox(height: 18),
+
+                  // ==================================================
+                  // STEPS
+                  // ==================================================
+
+                  Text(
+                    widget.language == 'en'
+                        ? '📋 Step-by-Step Guidance'
+                        : '📋 படிப்படியான வழிகாட்டுதல்',
+                    style: TextStyle(
+                      fontSize: 18,
+                      fontWeight:
+                      FontWeight.bold,
+                      color: color,
+                    ),
+                  ),
+
+                  const SizedBox(height: 10),
+
+                  ...List.generate(
+                    steps.length,
+                        (index) {
+                      return _StepCard(
+                        stepNumber: index + 1,
+                        step: steps[index],
+                        imagePath:
+                        index < images.length
+                            ? images[index]
+                            : null,
+                        color: color,
+                      );
+                    },
+                  ),
+
+                  const SizedBox(height: 8),
+
+                  // ==================================================
+                  // 112 BUTTON
+                  // ==================================================
+
+                  SizedBox(
+                    width: double.infinity,
+                    child:
+                    ElevatedButton.icon(
+                      onPressed: () {
+                        _showCallMessage(
+                          context,
+                        );
+                      },
+                      icon: const Icon(
+                        Icons.phone_in_talk,
+                      ),
+                      label: Text(
+                        widget.language == 'en'
+                            ? 'CALL 112'
+                            : '112 ஐ அழைக்கவும்',
+                      ),
+                      style:
+                      ElevatedButton.styleFrom(
+                        backgroundColor: color,
+                        foregroundColor:
+                        Colors.white,
+                        padding:
+                        const EdgeInsets.symmetric(
+                          vertical: 15,
+                        ),
+                        shape:
+                        RoundedRectangleBorder(
+                          borderRadius:
+                          BorderRadius.circular(
+                            12,
+                          ),
+                        ),
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+        ],
+      ),
+    );
+  }
+
+  void _showCallMessage(
+      BuildContext context,
+      ) {
+    showDialog(
+      context: context,
+      builder: (_) => AlertDialog(
+        title: const Text(
+          'Emergency Assistance',
+        ),
+        content: Text(
+          widget.language == 'en'
+              ? 'Please use your phone dialer to call 112 immediately.'
+              : 'உங்கள் தொலைபேசியைப் பயன்படுத்தி உடனடியாக 112 ஐ அழைக்கவும்.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () =>
+                Navigator.pop(context),
+            child: const Text('OK'),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+// ================================================================
+// STEP CARD
+// ================================================================
+
+class _StepCard extends StatelessWidget {
+  final int stepNumber;
+  final Map<String, dynamic> step;
+  final String? imagePath;
+  final Color color;
+
+  const _StepCard({
+    required this.stepNumber,
+    required this.step,
+    required this.imagePath,
+    required this.color,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      margin:
+      const EdgeInsets.only(bottom: 12),
+      padding:
+      const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius:
+        BorderRadius.circular(14),
+      ),
+      child: Column(
+        children: [
+
+          Row(
+            crossAxisAlignment:
+            CrossAxisAlignment.start,
+            children: [
+
+              Container(
+                width: 32,
+                height: 32,
+                alignment:
+                Alignment.center,
+                decoration: BoxDecoration(
+                  color: color,
+                  shape: BoxShape.circle,
+                ),
+                child: Text(
+                  '$stepNumber',
+                  style:
+                  const TextStyle(
+                    color: Colors.white,
+                    fontWeight:
+                    FontWeight.bold,
+                  ),
+                ),
+              ),
+
+              const SizedBox(width: 10),
+
+              Icon(
+                step['icon'] as IconData,
+                color: color,
+                size: 22,
+              ),
+
+              const SizedBox(width: 10),
+
+              Expanded(
+                child: Text(
+                  step['text'] as String,
+                  style:
+                  const TextStyle(
+                    fontSize: 13.5,
+                    height: 1.4,
+                  ),
+                ),
+              ),
+            ],
+          ),
+
+          if (imagePath != null) ...[
+            const SizedBox(height: 12),
+
+            ClipRRect(
+              borderRadius:
+              BorderRadius.circular(12),
+              child: Image.asset(
+                imagePath!,
+                height: 160,
+                width: double.infinity,
+                fit: BoxFit.contain,
+                errorBuilder:
+                    (_, __, ___) {
+                  return const SizedBox(
+                    height: 80,
+                    child: Center(
+                      child: Text(
+                        'Image unavailable',
+                      ),
+                    ),
+                  );
+                },
+              ),
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+}
+
+// ================================================================
+// OFFLINE VIDEO PLAYER
+// ================================================================
+
+class _OfflineVideoPlayer
+    extends StatefulWidget {
+  final String assetPath;
+
+  const _OfflineVideoPlayer({
+    required this.assetPath,
+  });
+
+  @override
+  State<_OfflineVideoPlayer> createState() =>
+      _OfflineVideoPlayerState();
+}
+
+class _OfflineVideoPlayerState
+    extends State<_OfflineVideoPlayer> {
+
+  VideoPlayerController? _controller;
+
+  bool _loading = true;
+  bool _error = false;
+
+  @override
+  void initState() {
+    super.initState();
+
+    _initialize();
+  }
+
+  Future<void> _initialize() async {
+    try {
+      final controller =
+      VideoPlayerController.asset(
+        widget.assetPath,
+      );
+
+      await controller.initialize();
+
+      if (!mounted) {
+        controller.dispose();
+        return;
+      }
+
+      await controller.setLooping(false);
+
+      setState(() {
+        _controller = controller;
+        _loading = false;
+      });
+    } catch (e) {
+      if (!mounted) return;
+
+      setState(() {
+        _loading = false;
+        _error = true;
+      });
+    }
+  }
+
+  @override
+  void dispose() {
+    _controller?.dispose();
+
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+
+    if (_loading) {
+      return Container(
+        height: 210,
+        decoration: BoxDecoration(
+          color: Colors.black12,
+          borderRadius:
+          BorderRadius.circular(16),
+        ),
+        child: const Center(
+          child:
+          CircularProgressIndicator(),
+        ),
+      );
+    }
+
+    if (_error || _controller == null) {
+      return Container(
+        height: 210,
+        decoration: BoxDecoration(
+          color: Colors.black12,
+          borderRadius:
+          BorderRadius.circular(16),
+        ),
+        child: const Center(
+          child: Column(
+            mainAxisAlignment:
+            MainAxisAlignment.center,
+            children: [
+              Icon(
+                Icons.video_library_outlined,
+                size: 40,
+              ),
+              SizedBox(height: 8),
+              Text(
+                'Video unavailable',
+              ),
+            ],
+          ),
+        ),
+      );
+    }
+
+    final controller = _controller!;
+
+    return Container(
+      decoration: BoxDecoration(
+        color: Colors.black,
+        borderRadius:
+        BorderRadius.circular(16),
+      ),
+      clipBehavior:
+      Clip.antiAlias,
+      child: Column(
+        children: [
+
+          AspectRatio(
+            aspectRatio:
+            controller.value.aspectRatio,
+            child: VideoPlayer(
+              controller,
+            ),
+          ),
+
+          Row(
+            mainAxisAlignment:
+            MainAxisAlignment.center,
+            children: [
+
+              IconButton(
+                icon: Icon(
+                  controller.value.isPlaying
+                      ? Icons.pause
+                      : Icons.play_arrow,
+                  color: Colors.white,
+                ),
+                onPressed: () {
+                  setState(() {
+                    if (controller
+                        .value.isPlaying) {
+                      controller.pause();
+                    } else {
+                      controller.play();
+                    }
+                  });
+                },
+              ),
+
+              IconButton(
+                icon: const Icon(
+                  Icons.replay,
+                  color: Colors.white,
+                ),
+                onPressed: () {
+                  controller.seekTo(
+                    Duration.zero,
+                  );
+
+                  controller.play();
+
+                  setState(() {});
+                },
+              ),
+
+              const SizedBox(width: 8),
+
+              const Icon(
+                Icons.volume_up,
+                color: Colors.white,
+                size: 20,
+              ),
+
+              const SizedBox(width: 5),
+
+              const Text(
+                'Offline video',
+                style: TextStyle(
+                  color: Colors.white70,
+                  fontSize: 12,
+                ),
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+}
