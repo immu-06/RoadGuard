@@ -1,0 +1,190 @@
+import 'dart:convert';
+
+import 'package:flutter/services.dart';
+
+import '../models/first_aid_content.dart';
+
+class FirstAidService {
+  static Map<String, dynamic>? _contentMap;
+
+  // ==========================================================
+  // LOAD OFFLINE CONTENT MAP
+  // ==========================================================
+
+  static Future<void> loadContentMap() async {
+    try {
+      final jsonString = await rootBundle.loadString(
+        'assets/first_aid/content_map.json',
+      );
+
+      _contentMap = json.decode(jsonString);
+    } catch (e) {
+      throw Exception(
+        'Unable to load offline first-aid content: $e',
+      );
+    }
+  }
+
+  // ==========================================================
+  // GET CONTENT FOR A CRASH PACKET
+  // ==========================================================
+
+  static FirstAidContent getForCrashPacket(
+      Map<String, dynamic> packet,
+      ) {
+    if (_contentMap == null) {
+      throw Exception(
+        'First-aid content has not been loaded.',
+      );
+    }
+
+    final injuryType = determineInjuryType(packet);
+
+    final data = _contentMap![injuryType];
+
+    if (data == null) {
+      throw Exception(
+        'No first-aid content found for $injuryType',
+      );
+    }
+
+    return FirstAidContent.fromJson(
+      injuryType,
+      Map<String, dynamic>.from(data),
+    );
+  }
+
+  // ==========================================================
+  // DETERMINE INJURY TYPE
+  // ==========================================================
+
+  static String determineInjuryType(
+      Map<String, dynamic> packet,
+      ) {
+    final severity =
+        packet['SEV']?.toString().toUpperCase() ?? '';
+
+    final rotation =
+        packet['ROT']?.toString().toUpperCase() ?? '';
+
+    final vehicle =
+        packet['VEHICLE']?.toString().toUpperCase() ?? '';
+
+    final silenceString =
+        packet['SILENCE']?.toString() ?? '0';
+
+    final unresponsive =
+        packet['UNRESPONSIVE']
+            ?.toString()
+            .toLowerCase() ==
+            'true';
+
+    final bleeding =
+        packet['BLEEDING']
+            ?.toString()
+            .toLowerCase() ==
+            'true';
+
+    // ----------------------------------------------------------
+    // 1. UNRESPONSIVE → CPR
+    // ----------------------------------------------------------
+
+    if (unresponsive) {
+      return 'unresponsive';
+    }
+
+    // ----------------------------------------------------------
+    // 2. BLEEDING
+    // ----------------------------------------------------------
+
+    if (bleeding) {
+      return 'bleeding';
+    }
+
+    // ----------------------------------------------------------
+    // 3. SPINAL INJURY
+    // ----------------------------------------------------------
+
+    if (rotation == 'HIGH') {
+      return 'spinal';
+    }
+
+    // ----------------------------------------------------------
+    // 4. TWO-WHEELER / HELMET
+    // ----------------------------------------------------------
+
+    if (vehicle == '2W') {
+      return 'two_wheeler_helmet';
+    }
+
+    // ----------------------------------------------------------
+    // 5. SILENCE / POSSIBLE UNRESPONSIVENESS
+    // ----------------------------------------------------------
+
+    final silenceSeconds =
+        int.tryParse(
+          silenceString.replaceAll(
+            RegExp(r'[^0-9]'),
+            '',
+          ),
+        ) ??
+            0;
+
+    if (silenceSeconds >= 8) {
+      return 'unresponsive';
+    }
+
+    // ----------------------------------------------------------
+    // 6. CRITICAL
+    // ----------------------------------------------------------
+
+    if (severity == 'CRITICAL' ||
+        severity == 'SEVERE' ||
+        severity == '5' ||
+        severity == '4') {
+      return 'bleeding';
+    }
+
+    // ----------------------------------------------------------
+    // 7. MODERATE
+    // ----------------------------------------------------------
+
+    if (severity == 'MODERATE' ||
+        severity == '3') {
+      return 'shock';
+    }
+
+    // ----------------------------------------------------------
+    // 8. DEFAULT
+    // ----------------------------------------------------------
+
+    return 'shock';
+  }
+
+  // ==========================================================
+  // GET CONTENT DIRECTLY
+  // ==========================================================
+
+  static FirstAidContent getContent(
+      String injuryType,
+      ) {
+    if (_contentMap == null) {
+      throw Exception(
+        'First-aid content has not been loaded.',
+      );
+    }
+
+    final data = _contentMap![injuryType];
+
+    if (data == null) {
+      throw Exception(
+        'No content found for $injuryType',
+      );
+    }
+
+    return FirstAidContent.fromJson(
+      injuryType,
+      Map<String, dynamic>.from(data),
+    );
+  }
+}
