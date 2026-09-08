@@ -1,0 +1,2035 @@
+import 'dart:async';
+import 'dart:math' as math;
+import 'foreground_ble_task.dart';
+import 'package:flutter_blue_plus/flutter_blue_plus.dart';
+import 'package:permission_handler/permission_handler.dart';
+import 'package:flutter_foreground_task/flutter_foreground_task.dart';
+import '../models/crash_model.dart';
+import 'ml_service.dart';
+
+
+// ============================================================
+// ROADGUARD BLE SERVICE
+// ============================================================
+//
+// BLE FLOW:
+//
+// ESP32 NODE A
+//      ↓
+// ROADGUARD BLE
+//      ↓
+// GATT NOTIFICATION
+//      ↓
+// FlutterBluePlus
+//      ↓
+// CrashData parser
+//      ↓
+// UNIT CONVERSION
+//      ↓
+// TFLITE AI
+//      ↓
+// Emergency Alert
+//      ↓
+// Supabase
+//      ↓
+// SMS
+//
+// ============================================================
+
+class BleService {
+  // ============================================================
+  // SINGLETON
+  // ============================================================
+
+  static final BleService instance =
+  BleService._internal();
+
+  factory BleService() => instance;
+
+  BleService._internal();
+
+
+  // ============================================================
+  // ROADGUARD BLE UUIDs
+  // ============================================================
+
+  static final Guid roadguardServiceUuid =
+  Guid(
+    '4fafc201-1fb5-459e-8fcc-c5c9c331914b',
+  );
+
+  static final Guid crashCharacteristicUuid =
+  Guid(
+    'beb5483e-36e1-4688-b7f5-ea07361b26a8',
+  );
+
+
+  // ============================================================
+  // DUPLICATE CRASH PROTECTION
+  // ============================================================
+
+  final Set<String> _seenCrashIds =
+  <String>{};
+
+
+  // ============================================================
+  // BLE STATE
+  // ============================================================
+
+  StreamSubscription<List<ScanResult>>?
+  _scanSub;
+
+  StreamSubscription<BluetoothConnectionState>?
+  _connectionSub;
+
+  StreamSubscription<List<int>>?
+  _characteristicSub;
+
+  BluetoothDevice? _device;
+
+  BluetoothCharacteristic?
+  _crashCharacteristic;
+
+  bool _isListening = false;
+
+  bool _isStarting = false;
+
+  bool _isConnecting = false;
+
+  bool _scanRestartScheduled = false;
+
+
+  // ============================================================
+  // PACKET BUFFER
+  // ============================================================
+
+  String _packetBuffer = '';
+
+
+  // ============================================================
+  // AI
+  // ============================================================
+
+  final MlService _mlService =
+  MlService();
+
+  bool _aiInitialized = false;
+
+
+  // ============================================================
+  // STATUS
+  // ============================================================
+
+  bool get isListening =>
+      _isListening;
+
+  bool get isAIReady =>
+      _aiInitialized &&
+          _mlService.isReady;
+
+
+  // ============================================================
+  // PERMISSIONS
+  //
+  // IMPORTANT:
+  //
+  // Call from MAIN UI isolate.
+  //
+  // Do NOT request permissions from the foreground
+  // task isolate.
+  //
+  // ============================================================
+
+  Future<void> requestPermissions() async {
+    print('======================================');
+    print('🔐 REQUESTING ROADGUARD BLE PERMISSIONS');
+    print('======================================');
+
+    try {
+      final result = await [
+        Permission.bluetoothScan,
+        Permission.bluetoothConnect,
+        Permission.locationWhenInUse,
+        Permission.notification,
+      ].request();
+
+      result.forEach(
+            (permission, status) {
+          print(
+            '$permission : $status',
+          );
+        },
+      );
+
+      print('======================================');
+      print('✅ BLE PERMISSION REQUEST COMPLETE');
+      print('======================================');
+    } catch (e, stackTrace) {
+      print('======================================');
+      print('❌ BLE PERMISSION REQUEST FAILED');
+      print('Error: $e');
+      print('Stack: $stackTrace');
+      print('======================================');
+    }
+  }
+
+
+  // ============================================================
+  // INITIALIZE AI
+  // ============================================================
+
+  Future<void> _initializeAI() async {
+    if (_aiInitialized &&
+        _mlService.isReady) {
+      return;
+    }
+
+    print('======================================');
+    print('🤖 INITIALIZING OFFLINE AI');
+    print('======================================');
+
+    try {
+      await _mlService.initialize();
+
+      _aiInitialized = true;
+
+      print('======================================');
+      print('✅ OFFLINE AI READY');
+      print('======================================');
+    } catch (e, stackTrace) {
+      print('======================================');
+      print('❌ OFFLINE AI INITIALIZATION FAILED');
+      print('Error: $e');
+      print('Stack: $stackTrace');
+      print('======================================');
+
+      rethrow;
+    }
+  }
+
+
+  // ============================================================
+  // START REAL BLE MONITORING
+  // ============================================================
+
+  Future<void> startListening() async {
+    if (_isListening) {
+      print(
+        '⚠️ BLE LISTENER ALREADY RUNNING',
+      );
+      return;
+    }
+
+    if (_isStarting) {
+      print(
+        '⚠️ BLE START ALREADY IN PROGRESS',
+      );
+      return;
+    }
+
+    _isStarting = true;
+
+    print('======================================');
+    print('📡 STARTING ROADGUARD BLE MONITOR');
+    print('======================================');
+
+    try {
+      // --------------------------------------------------------
+      // CHECK BLUETOOTH
+      // --------------------------------------------------------
+
+      print(
+        '🔵 CHECKING BLUETOOTH STATE...',
+      );
+
+      final bluetoothState =
+      await FlutterBluePlus
+          .adapterState
+          .first;
+
+      print(
+        '🔵 BLUETOOTH STATE: '
+            '$bluetoothState',
+      );
+
+      if (bluetoothState !=
+          BluetoothAdapterState.on) {
+        print('======================================');
+        print('❌ BLUETOOTH IS NOT ON');
+        print('Please turn Bluetooth ON.');
+        print('======================================');
+
+        return;
+      }
+
+
+      // --------------------------------------------------------
+      // INITIALIZE AI
+      // --------------------------------------------------------
+
+      await _initializeAI();
+
+
+      // --------------------------------------------------------
+      // CANCEL OLD SCAN LISTENER
+      // --------------------------------------------------------
+
+      await _scanSub?.cancel();
+
+      _scanSub = null;
+
+
+      // --------------------------------------------------------
+      // SET LISTENING
+      // --------------------------------------------------------
+
+      _isListening = true;
+
+
+      // --------------------------------------------------------
+      // LISTEN TO SCAN RESULTS
+      // --------------------------------------------------------
+
+      _scanSub =
+          FlutterBluePlus.scanResults.listen(
+                (results) {
+              for (final result in results) {
+                _printBleDevice(result);
+              }
+            },
+            onError: (error) {
+              print('======================================');
+              print('❌ BLE SCAN ERROR');
+              print('Error: $error');
+              print('======================================');
+            },
+            cancelOnError: false,
+          );
+
+
+      // --------------------------------------------------------
+      // START UNFILTERED SCAN
+      // --------------------------------------------------------
+
+      print('======================================');
+      print('🔎 STARTING BLE SCAN');
+      print('======================================');
+
+      await FlutterBluePlus.startScan(
+        timeout:
+        const Duration(
+          hours: 1,
+        ),
+      );
+
+      print('======================================');
+      print('✅ BLE SCAN STARTED');
+      print('======================================');
+
+      print(
+        '📱 Looking for ROADGUARD...',
+      );
+
+      print(
+        '📡 Expected service UUID: '
+            '$roadguardServiceUuid',
+      );
+
+      print('======================================');
+      print('🤖 OFFLINE AI ACTIVE');
+      print('======================================');
+    } catch (e, stackTrace) {
+      _isListening = false;
+
+      print('======================================');
+      print('❌ BLE START FAILED');
+      print('Error: $e');
+      print('Stack: $stackTrace');
+      print('======================================');
+    } finally {
+      _isStarting = false;
+    }
+  }
+
+
+  // ============================================================
+  // HANDLE SCAN RESULT
+  // ============================================================
+
+  void _printBleDevice(
+      ScanResult result,
+      ) {
+    final device =
+        result.device;
+
+    final advertisement =
+        result.advertisementData;
+
+    final advName =
+        advertisement.advName;
+
+    final platformName =
+        device.platformName;
+
+    final serviceUuids =
+        advertisement.serviceUuids;
+
+    print('======================================');
+    print('📡 BLE DEVICE FOUND');
+    print('======================================');
+
+    print(
+      'Advertisement name: '
+          '${advName.isEmpty ? "(empty)" : advName}',
+    );
+
+    print(
+      'Platform name: '
+          '${platformName.isEmpty ? "(empty)" : platformName}',
+    );
+
+    print(
+      'Remote ID: '
+          '${device.remoteId}',
+    );
+
+    print(
+      'RSSI: ${result.rssi}',
+    );
+
+    print(
+      'Service UUIDs: '
+          '$serviceUuids',
+    );
+
+    print('======================================');
+
+
+    // ==========================================================
+    // ROADGUARD DETECTION
+    // ==========================================================
+
+    final isRoadGuard =
+        advName == 'ROADGUARD' ||
+            advName == 'ROADGUARD_NODE_A' ||
+            platformName == 'ROADGUARD' ||
+            platformName == 'ROADGUARD_NODE_A' ||
+            serviceUuids.contains(
+              roadguardServiceUuid,
+            );
+
+    if (!isRoadGuard) {
+      return;
+    }
+
+
+    print('======================================');
+    print('🚨🚨 ROADGUARD FOUND 🚨🚨');
+    print('======================================');
+
+    print(
+      'Device: '
+          '${platformName.isNotEmpty ? platformName : advName}',
+    );
+
+    print(
+      'Remote ID: '
+          '${device.remoteId}',
+    );
+
+    print(
+      'RSSI: ${result.rssi}',
+    );
+
+    print('======================================');
+
+
+    // ==========================================================
+    // CONNECT ONLY ONCE
+    // ==========================================================
+
+    if (_device?.remoteId !=
+        device.remoteId &&
+        !_isConnecting) {
+      unawaited(
+        _connectToNode(device),
+      );
+    }
+  }
+
+
+  // ============================================================
+  // CONNECT TO ROADGUARD NODE A
+  // ============================================================
+
+  Future<void> _connectToNode(
+      BluetoothDevice device,
+      ) async {
+    if (_isConnecting) {
+      return;
+    }
+
+    _isConnecting = true;
+
+    try {
+      print('======================================');
+      print('🔗 CONNECTING TO ROADGUARD');
+      print('======================================');
+
+      print(
+        'Device: ${device.remoteId}',
+      );
+
+
+      // --------------------------------------------------------
+      // STOP SCANNING
+      // --------------------------------------------------------
+
+      try {
+        await FlutterBluePlus.stopScan();
+      } catch (_) {}
+
+
+      // --------------------------------------------------------
+      // SAVE DEVICE
+      // --------------------------------------------------------
+
+      _device = device;
+
+
+      // --------------------------------------------------------
+      // CONNECT
+      // --------------------------------------------------------
+
+      print(
+        '🔗 Starting GATT connection...',
+      );
+
+      await device.connect(
+        license: License.nonprofit,
+        timeout:
+        const Duration(
+          seconds: 15,
+        ),
+        autoConnect: false,
+      );
+
+      print('======================================');
+      print('✅ BLE DEVICE CONNECTED');
+      print('======================================');
+
+
+      // --------------------------------------------------------
+      // REQUEST MTU
+      // --------------------------------------------------------
+
+      try {
+        print(
+          '📏 REQUESTING BLE MTU...',
+        );
+
+        final mtu =
+        await device.requestMtu(247);
+
+        print(
+          '✅ BLE MTU: $mtu',
+        );
+      } catch (e) {
+        print(
+          '⚠️ MTU REQUEST FAILED: $e',
+        );
+
+        print(
+          'Continuing with current MTU...',
+        );
+      }
+
+
+      // --------------------------------------------------------
+      // CONNECTION STATE
+      // --------------------------------------------------------
+
+      await _connectionSub?.cancel();
+
+      _connectionSub =
+          device.connectionState.listen(
+                (state) {
+              print(
+                '🔗 BLE CONNECTION STATE: '
+                    '$state',
+              );
+
+              if (state ==
+                  BluetoothConnectionState
+                      .disconnected) {
+                print('======================================');
+                print('⚠️ ROADGUARD DISCONNECTED');
+                print('======================================');
+
+                _device = null;
+
+                _crashCharacteristic = null;
+
+                _packetBuffer = '';
+
+                _restartScanning();
+              }
+            },
+            onError: (error) {
+              print(
+                '❌ BLE CONNECTION STATE ERROR: '
+                    '$error',
+              );
+            },
+          );
+
+
+      // --------------------------------------------------------
+      // DISCOVER SERVICES
+      // --------------------------------------------------------
+
+      print('======================================');
+      print('🔍 DISCOVERING BLE SERVICES');
+      print('======================================');
+
+      final services =
+      await device.discoverServices();
+
+      print(
+        '🔍 SERVICES FOUND: '
+            '${services.length}',
+      );
+
+
+      BluetoothCharacteristic?
+      crashCharacteristic;
+
+
+      // --------------------------------------------------------
+      // PRINT SERVICES
+      // --------------------------------------------------------
+
+      for (final service in services) {
+        print(
+          'SERVICE: '
+              '${service.uuid}',
+        );
+
+        for (final characteristic
+        in service.characteristics) {
+          print(
+            '  CHARACTERISTIC: '
+                '${characteristic.uuid}',
+          );
+
+          print(
+            '  Properties: '
+                '${characteristic.properties}',
+          );
+
+
+          // ----------------------------------------------------
+          // EXACT ROADGUARD SERVICE
+          // ----------------------------------------------------
+
+          if (service.uuid ==
+              roadguardServiceUuid &&
+              characteristic.uuid ==
+                  crashCharacteristicUuid) {
+            crashCharacteristic =
+                characteristic;
+
+            print('======================================');
+
+            print(
+              '✅ ROADGUARD CHARACTERISTIC FOUND',
+            );
+
+            print(
+              'Service UUID: '
+                  '${service.uuid}',
+            );
+
+            print(
+              'Characteristic UUID: '
+                  '${characteristic.uuid}',
+            );
+
+            print(
+              'Properties: '
+                  '${characteristic.properties}',
+            );
+
+            print('======================================');
+          }
+        }
+      }
+
+
+      // --------------------------------------------------------
+      // CHARACTERISTIC NOT FOUND
+      // --------------------------------------------------------
+
+      if (crashCharacteristic == null) {
+        print('======================================');
+        print(
+          '❌ ROADGUARD CHARACTERISTIC NOT FOUND',
+        );
+
+        print(
+          'Expected service: '
+              '$roadguardServiceUuid',
+        );
+
+        print(
+          'Expected characteristic: '
+              '$crashCharacteristicUuid',
+        );
+
+        print('======================================');
+
+        try {
+          await device.disconnect();
+        } catch (_) {}
+
+        _device = null;
+
+        _crashCharacteristic = null;
+
+        _restartScanning();
+
+        return;
+      }
+
+
+      _crashCharacteristic =
+          crashCharacteristic;
+
+
+      // --------------------------------------------------------
+      // CHECK NOTIFY
+      // --------------------------------------------------------
+
+      if (!crashCharacteristic
+          .properties
+          .notify) {
+        print('======================================');
+        print(
+          '❌ CHARACTERISTIC DOES NOT SUPPORT NOTIFY',
+        );
+        print('======================================');
+
+        try {
+          await device.disconnect();
+        } catch (_) {}
+
+        _device = null;
+
+        _crashCharacteristic = null;
+
+        _restartScanning();
+
+        return;
+      }
+
+
+      // --------------------------------------------------------
+      // ENABLE NOTIFICATIONS
+      // --------------------------------------------------------
+
+      print('======================================');
+      print(
+        '🔔 ENABLING BLE NOTIFICATIONS...',
+      );
+      print('======================================');
+
+      await crashCharacteristic
+          .setNotifyValue(true);
+
+      print('======================================');
+      print(
+        '✅ BLE NOTIFICATIONS ENABLED',
+      );
+      print('======================================');
+
+
+      // --------------------------------------------------------
+      // CHARACTERISTIC LISTENER
+      // --------------------------------------------------------
+
+      await _characteristicSub?.cancel();
+
+      _packetBuffer = '';
+
+      _characteristicSub =
+          crashCharacteristic
+              .onValueReceived
+              .listen(
+                (data) {
+              if (data.isEmpty) {
+                return;
+              }
+
+              final received =
+              String.fromCharCodes(
+                data,
+              );
+
+              print('======================================');
+              print('📦 BLE DATA RECEIVED');
+              print(
+                'Bytes: ${data.length}',
+              );
+              print(
+                'Raw data: $received',
+              );
+              print('======================================');
+
+              _handleBleData(
+                received,
+              );
+            },
+            onError: (error) {
+              print(
+                '❌ CHARACTERISTIC ERROR: '
+                    '$error',
+              );
+            },
+            cancelOnError: false,
+          );
+
+
+      // --------------------------------------------------------
+      // OPTIONAL INITIAL READ
+      // --------------------------------------------------------
+
+      if (crashCharacteristic
+          .properties
+          .read) {
+        try {
+          final data =
+          await crashCharacteristic.read();
+
+          if (data.isNotEmpty) {
+            final value =
+            String.fromCharCodes(
+              data,
+            ).trim();
+
+            print('======================================');
+            print(
+              '📖 INITIAL BLE VALUE',
+            );
+            print(
+              'Value: $value',
+            );
+            print('======================================');
+
+            if (value.startsWith('CR|')) {
+              _processCrashPacket(
+                value,
+              );
+            }
+          }
+        } catch (e) {
+          // This is not fatal.
+          //
+          // Your nRF Connect test already showed that
+          // notification monitoring can work even when
+          // the initial READ is not permitted.
+
+          print(
+            '⚠️ INITIAL READ FAILED: $e',
+          );
+
+          print(
+            'Continuing with notifications...',
+          );
+        }
+      }
+
+
+      // --------------------------------------------------------
+      // READY
+      // --------------------------------------------------------
+
+      print('======================================');
+      print(
+        '🟢 REAL BLE MONITORING READY',
+      );
+      print('======================================');
+    } catch (e, stackTrace) {
+      print('======================================');
+      print('❌ BLE CONNECTION FAILED');
+      print('Error: $e');
+      print('Stack: $stackTrace');
+      print('======================================');
+
+      try {
+        await device.disconnect();
+      } catch (_) {}
+
+      _device = null;
+
+      _crashCharacteristic = null;
+
+      _packetBuffer = '';
+
+      _restartScanning();
+    } finally {
+      _isConnecting = false;
+    }
+  }
+
+
+  // ============================================================
+  // HANDLE BLE DATA
+  // ============================================================
+  //
+  // Handles:
+  //
+  // 1. Complete packet
+  // 2. Fragmented packet
+  // 3. Multiple packets
+  //
+  // ============================================================
+
+  void _handleBleData(
+      String received,
+      ) {
+    final clean =
+    received.replaceAll(
+      '\r',
+      '',
+    );
+
+    // ----------------------------------------------------------
+    // COMPLETE PACKET
+    // ----------------------------------------------------------
+
+    if (clean.trim().startsWith('CR|') &&
+        clean.trim().split('\n').length ==
+            1) {
+      final possiblePacket =
+      clean.trim();
+
+      final crash =
+      CrashData.tryParse(
+        possiblePacket,
+      );
+
+      if (crash != null) {
+        print('======================================');
+        print(
+          '📦 COMPLETE CRASH PACKET RECEIVED',
+        );
+        print(
+          'Crash ID: ${crash.crashId}',
+        );
+        print('======================================');
+
+        _processCrashPacket(
+          possiblePacket,
+        );
+
+        return;
+      }
+    }
+
+
+    // ----------------------------------------------------------
+    // ADD TO BUFFER
+    // ----------------------------------------------------------
+
+    _packetBuffer += clean;
+
+    print(
+      '📦 PACKET BUFFER LENGTH: '
+          '${_packetBuffer.length}',
+    );
+
+
+    // ----------------------------------------------------------
+    // FIND CR START
+    // ----------------------------------------------------------
+
+    if (!_packetBuffer.startsWith('CR|')) {
+      final start =
+      _packetBuffer.indexOf('CR|');
+
+      if (start >= 0) {
+        _packetBuffer =
+            _packetBuffer.substring(
+              start,
+            );
+      } else {
+        return;
+      }
+    }
+
+
+    // ----------------------------------------------------------
+    // TRY PARSE BUFFER
+    // --------------------------------------------------------
+
+    final crash =
+    CrashData.tryParse(
+      _packetBuffer.trim(),
+    );
+
+    if (crash != null) {
+      final completePacket =
+      _packetBuffer.trim();
+
+      print('======================================');
+      print(
+        '📦 COMPLETE BUFFERED CRASH PACKET',
+      );
+      print(
+        'Crash ID: ${crash.crashId}',
+      );
+      print(
+        'Packet: $completePacket',
+      );
+      print('======================================');
+
+      _packetBuffer = '';
+
+      _processCrashPacket(
+        completePacket,
+      );
+    }
+  }
+
+
+  // ============================================================
+  // PROCESS CRASH PACKET
+  // ============================================================
+  //
+  // FINAL PACKET FORMAT:
+  //
+  // CR|CrashID|LAT|LNG|SEVERITY|VEHICLE|
+  // AccX|AccY|AccZ|GyroX|GyroY|GyroZ|
+  // Speed|MotionIntensity
+  //
+  // ============================================================
+
+  void _processCrashPacket(
+      String packet,
+      ) {
+    final cleanPacket =
+    packet.trim();
+
+    if (!cleanPacket.startsWith('CR|')) {
+      print(
+        '⚠️ IGNORING NON-CRASH PACKET',
+      );
+
+      return;
+    }
+
+    print('======================================');
+    print(
+      '📦 PROCESSING CRASH PACKET',
+    );
+    print(
+      cleanPacket,
+    );
+    print('======================================');
+
+
+    // ----------------------------------------------------------
+    // PARSE
+    // ----------------------------------------------------------
+
+    final crash =
+    CrashData.tryParse(
+      cleanPacket,
+    );
+
+    if (crash == null) {
+      print('======================================');
+      print(
+        '❌ INVALID CRASH PACKET',
+      );
+
+      print(
+        'Expected:',
+      );
+
+      print(
+        'CR|CrashID|LAT|LNG|SEVERITY|VEHICLE|'
+            'AccX|AccY|AccZ|GyroX|GyroY|GyroZ|'
+            'Speed|MotionIntensity',
+      );
+
+      print('======================================');
+
+      return;
+    }
+
+
+    // ----------------------------------------------------------
+    // PRINT PARSED DATA
+    // ----------------------------------------------------------
+
+    print('======================================');
+    print(
+      '🚨 HARDWARE CRASH PACKET PARSED',
+    );
+    print('======================================');
+
+    print(
+      'Crash ID: ${crash.crashId}',
+    );
+
+    print(
+      'Latitude: ${crash.lat}',
+    );
+
+    print(
+      'Longitude: ${crash.lng}',
+    );
+
+    print(
+      'Severity: ${crash.severity}',
+    );
+
+    print(
+      'Vehicle: ${crash.vehicleType}',
+    );
+
+    print(
+      'AccX: ${crash.accX}',
+    );
+
+    print(
+      'AccY: ${crash.accY}',
+    );
+
+    print(
+      'AccZ: ${crash.accZ}',
+    );
+
+    print(
+      'GyroX: ${crash.gyroX}',
+    );
+
+    print(
+      'GyroY: ${crash.gyroY}',
+    );
+
+    print(
+      'GyroZ: ${crash.gyroZ}',
+    );
+
+    print(
+      'Speed: ${crash.speedKmh}',
+    );
+
+    print(
+      'MotionIntensity: '
+          '${crash.motionIntensity}',
+    );
+
+    print('======================================');
+
+
+    // ----------------------------------------------------------
+    // DUPLICATE PROTECTION
+    // ----------------------------------------------------------
+
+    if (_seenCrashIds.contains(
+      crash.crashId,
+    )) {
+      print(
+        '⚠️ DUPLICATE CRASH IGNORED: '
+            '${crash.crashId}',
+      );
+
+      return;
+    }
+
+    _seenCrashIds.add(
+      crash.crashId,
+    );
+
+
+    // ----------------------------------------------------------
+    // RUN AI
+    // ----------------------------------------------------------
+
+    unawaited(
+      _runAiDetection(
+        crash,
+      ),
+    );
+  }
+
+
+  // ============================================================
+  // HARDWARE UNIT CONVERSION
+  // ============================================================
+  //
+  // CURRENT ESP32 PACKET:
+  //
+  // Acc:
+  //     G
+  //
+  // Gyro:
+  //     degrees/second
+  //
+  // Model training:
+  //
+  // Acc:
+  //     m/s²
+  //
+  // Gyro:
+  //     rad/s
+  //
+  // Therefore:
+  //
+  // 1 G = 9.80665 m/s²
+  //
+  // degrees/s × pi / 180 = rad/s
+  //
+  // ============================================================
+
+  double _gToMetersPerSecondSquared(
+      double value,
+      ) {
+    return value * 9.80665;
+  }
+
+  double _degreesPerSecondToRadians(
+      double value,
+      ) {
+    return value *
+        math.pi /
+        180.0;
+  }
+
+
+  // ============================================================
+  // HARDWARE MOTION INTENSITY
+  // ============================================================
+  //
+  // The training feature uses acceleration magnitude:
+  //
+  // sqrt(
+  //   AccX² +
+  //   AccY² +
+  //   AccZ²
+  // )
+  //
+  // ============================================================
+
+  double _calculateModelMotionIntensity({
+    required double accX,
+    required double accY,
+    required double accZ,
+  }) {
+    return math.sqrt(
+      (accX * accX) +
+          (accY * accY) +
+          (accZ * accZ),
+    );
+  }
+
+
+  // ============================================================
+  // AI CRASH DETECTION
+  // ============================================================
+
+  Future<void> _runAiDetection(
+      CrashData crash,
+      ) async {
+    print('======================================');
+    print(
+      '🤖 RUNNING OFFLINE AI FOR HARDWARE EVENT',
+    );
+    print('======================================');
+
+    try {
+      await _initializeAI();
+
+
+      // ========================================================
+      // CONVERT HARDWARE UNITS
+      // ========================================================
+
+      final accXMs2 =
+      _gToMetersPerSecondSquared(
+        crash.accX,
+      );
+
+      final accYMs2 =
+      _gToMetersPerSecondSquared(
+        crash.accY,
+      );
+
+      final accZMs2 =
+      _gToMetersPerSecondSquared(
+        crash.accZ,
+      );
+
+
+      final gyroXRads =
+      _degreesPerSecondToRadians(
+        crash.gyroX,
+      );
+
+      final gyroYRads =
+      _degreesPerSecondToRadians(
+        crash.gyroY,
+      );
+
+      final gyroZRads =
+      _degreesPerSecondToRadians(
+        crash.gyroZ,
+      );
+
+
+      // ========================================================
+      // CALCULATE MOTION INTENSITY FOR MODEL
+      // ========================================================
+
+      final modelMotionIntensity =
+      _calculateModelMotionIntensity(
+        accX: accXMs2,
+        accY: accYMs2,
+        accZ: accZMs2,
+      );
+
+
+      // ========================================================
+      // PRINT CONVERTED VALUES
+      // ========================================================
+
+      print('======================================');
+      print(
+        '🔄 HARDWARE → ML UNIT CONVERSION',
+      );
+      print('======================================');
+
+      print(
+        'AccX: '
+            '${crash.accX} G → '
+            '${accXMs2.toStringAsFixed(4)} m/s²',
+      );
+
+      print(
+        'AccY: '
+            '${crash.accY} G → '
+            '${accYMs2.toStringAsFixed(4)} m/s²',
+      );
+
+      print(
+        'AccZ: '
+            '${crash.accZ} G → '
+            '${accZMs2.toStringAsFixed(4)} m/s²',
+      );
+
+      print(
+        'GyroX: '
+            '${crash.gyroX} deg/s → '
+            '${gyroXRads.toStringAsFixed(4)} rad/s',
+      );
+
+      print(
+        'GyroY: '
+            '${crash.gyroY} deg/s → '
+            '${gyroYRads.toStringAsFixed(4)} rad/s',
+      );
+
+      print(
+        'GyroZ: '
+            '${crash.gyroZ} deg/s → '
+            '${gyroZRads.toStringAsFixed(4)} rad/s',
+      );
+
+      print(
+        'Speed: '
+            '${crash.speedKmh} km/h',
+      );
+
+      print(
+        'Motion: '
+            '${modelMotionIntensity.toStringAsFixed(4)} m/s²',
+      );
+
+      print('======================================');
+
+
+      // ========================================================
+      // RUN TFLITE
+      // ========================================================
+
+      final prediction =
+      _mlService.predict(
+        accX: accXMs2,
+        accY: accYMs2,
+        accZ: accZMs2,
+        gyroX: gyroXRads,
+        gyroY: gyroYRads,
+        gyroZ: gyroZRads,
+        speedKmh: crash.speedKmh,
+        motionIntensity:
+        modelMotionIntensity,
+      );
+
+
+      // ========================================================
+      // HARDWARE SAFETY OVERRIDE
+      // ========================================================
+      //
+      // The ESP32 only creates the CR packet after its own
+      // crash-confirmation logic.
+      //
+      // For severity 4 or 5, do NOT allow an out-of-distribution
+      // ML result to silently suppress the emergency alert.
+      //
+      // This is especially important because the current
+      // training dataset does not contain the exact same
+      // hardware gyro distribution as the real MPU6050.
+      //
+      // ========================================================
+
+      final hardwareSafetyOverride =
+          crash.severity >= 4;
+
+      final confirmedCrash =
+          prediction.isCrash ||
+              hardwareSafetyOverride;
+
+
+      // ========================================================
+      // PRINT FINAL DECISION
+      // ========================================================
+
+      print('======================================');
+      print(
+        '🤖 FINAL CRASH DECISION',
+      );
+      print('======================================');
+
+      print(
+        'AI probability: '
+            '${(prediction.probability * 100).toStringAsFixed(2)}%',
+      );
+
+      print(
+        'AI result: '
+            '${prediction.isCrash ? "CRASH" : "NO CRASH"}',
+      );
+
+      print(
+        'Hardware severity: '
+            '${crash.severity}',
+      );
+
+      print(
+        'Hardware safety override: '
+            '${hardwareSafetyOverride ? "YES" : "NO"}',
+      );
+
+      print(
+        'FINAL RESULT: '
+            '${confirmedCrash ? "🚨 CRASH" : "✅ NO CRASH"}',
+      );
+
+      print('======================================');
+
+
+      // ========================================================
+      // NO CRASH
+      // ========================================================
+
+      if (!confirmedCrash) {
+        print('======================================');
+        print(
+          '✅ AI + HARDWARE SAY NO CRASH',
+        );
+        print('======================================');
+
+        return;
+      }
+
+
+      // ========================================================
+      // CRASH CONFIRMED
+      // ========================================================
+
+      if (prediction.isCrash) {
+        print('======================================');
+        print(
+          '🚨🚨 AI CONFIRMED CRASH 🚨🚨',
+        );
+        print(
+          'AI confidence: '
+              '${(prediction.probability * 100).toStringAsFixed(2)}%',
+        );
+        print('======================================');
+      } else {
+        print('======================================');
+        print(
+          '🚨🚨 HARDWARE SAFETY OVERRIDE 🚨🚨',
+        );
+        print(
+          'ESP32 reported severity '
+              '${crash.severity}.',
+        );
+        print(
+          'AI probability was only '
+              '${(prediction.probability * 100).toStringAsFixed(2)}%.',
+        );
+        print(
+          'Emergency flow will continue.',
+        );
+        print('======================================');
+      }
+
+
+      // ========================================================
+      // EMERGENCY FLOW
+      // ========================================================
+
+      await _handleConfirmedCrash(
+        crash,
+      );
+    } catch (e, stackTrace) {
+      print('======================================');
+      print(
+        '❌ AI PROCESSING FAILED',
+      );
+
+      print(
+        'Error: $e',
+      );
+
+      print(
+        'Stack trace: $stackTrace',
+      );
+
+      print('======================================');
+    }
+  }
+
+
+  // ============================================================
+  // CONFIRMED CRASH
+  // ============================================================
+
+  // ============================================================
+// CONFIRMED CRASH
+// ============================================================
+//
+// IMPORTANT:
+//
+// This function runs inside the BLE foreground-task isolate.
+//
+// DO NOT directly:
+//
+//     • navigate to Flutter UI
+//     • push /emergency
+//     • depend on the UI navigator
+//     • perform the main UI emergency flow
+//
+// Instead, send the complete crash packet to the MAIN isolate.
+//
+// The MAIN isolate will handle:
+//
+//     1. Emergency screen
+//     2. Notification
+//     3. Supabase
+//     4. Hospital SMS
+//
+// ============================================================
+
+  Future<void> _handleConfirmedCrash(
+      CrashData crash,
+      ) async {
+    print('========================================');
+    print('🚨 CRASH CONFIRMED');
+    print('========================================');
+
+    print('Crash ID: ${crash.crashId}');
+    print('Severity: ${crash.severity}');
+    print('Vehicle: ${crash.vehicleType}');
+
+    // ----------------------------------------------------------
+    // CREATE ORIGINAL 14-FIELD HARDWARE PACKET
+    // ----------------------------------------------------------
+
+    final packet = [
+      'CR',
+      crash.crashId,
+      crash.lat.toString(),
+      crash.lng.toString(),
+      crash.severity.toString(),
+      crash.vehicleType,
+      crash.accX.toString(),
+      crash.accY.toString(),
+      crash.accZ.toString(),
+      crash.gyroX.toString(),
+      crash.gyroY.toString(),
+      crash.gyroZ.toString(),
+      crash.speedKmh.toString(),
+      crash.motionIntensity.toString(),
+    ].join('|');
+
+    print('========================================');
+    print('📦 CRASH PACKET');
+    print('========================================');
+    print(packet);
+    print('========================================');
+
+    // ----------------------------------------------------------
+    // 1. SHOW ANDROID ALERT DIRECTLY FROM FOREGROUND ISOLATE
+    // ----------------------------------------------------------
+    //
+    // THIS DOES NOT WAIT FOR THE MAIN ISOLATE.
+    //
+    // Therefore disconnecting the terminal/debug connection
+    // should not prevent the Android crash notification.
+    //
+    // ----------------------------------------------------------
+
+    try {
+      await BleForegroundTaskHandler
+          .showBackgroundCrashAlert(
+        packet,
+      );
+
+      print(
+        '✅ BACKGROUND CRASH ALERT SENT TO PHONE',
+      );
+    } catch (e, stackTrace) {
+      print(
+        '❌ BACKGROUND CRASH ALERT FAILED',
+      );
+
+      print('Error: $e');
+      print('Stack: $stackTrace');
+    }
+
+    // ----------------------------------------------------------
+    // 2. SEND CRASH TO MAIN ISOLATE
+    // ----------------------------------------------------------
+    //
+    // Main isolate handles:
+    //
+    //     Emergency screen
+    //     Supabase
+    //     Hospital SMS
+    //
+    // The notification above is independent of this.
+    //
+    // ----------------------------------------------------------
+
+    try {
+      FlutterForegroundTask.sendDataToMain({
+        'type': 'CRASH',
+        'packet': packet,
+      });
+
+      print(
+        '✅ CRASH DATA SENT TO MAIN ISOLATE',
+      );
+    } catch (e, stackTrace) {
+      print(
+        '⚠️ MAIN ISOLATE SEND FAILED',
+      );
+
+      print('Error: $e');
+      print('Stack: $stackTrace');
+
+      // IMPORTANT:
+      //
+      // Do NOT treat this as a crash-alert failure.
+      //
+      // The Android notification was already generated above.
+    }
+  }
+
+  // ============================================================
+  // SOFTWARE CRASH TEST
+  // ============================================================
+  //
+  // IMPORTANT:
+  //
+  // These values are ALREADY in the units used by the model:
+  //
+  // Acc:
+  //     m/s²
+  //
+  // Gyro:
+  //     rad/s
+  //
+  // Therefore DO NOT convert them again.
+  //
+  // ============================================================
+
+  Future<void> simulateCrash() async {
+    print('======================================');
+    print(
+      '🧪 SOFTWARE AI CRASH TEST',
+    );
+    print('======================================');
+
+    try {
+      await _initializeAI();
+
+
+      // --------------------------------------------------------
+      // REAL CRASH DATASET VALUES
+      // --------------------------------------------------------
+
+      const accX =
+      3.389515511671651;
+
+      const accY =
+      3.861803342070409;
+
+      const accZ =
+      12.765140923693474;
+
+      const gyroX =
+      -0.0459741520070045;
+
+      const gyroY =
+      0.0386990278661096;
+
+      const gyroZ =
+      -0.0328079233930895;
+
+      const speedKmh =
+      5.33392761708628;
+
+      const motionIntensity =
+      13.76049284213479;
+
+
+      // --------------------------------------------------------
+      // DIRECT MODEL TEST
+      //
+      // No hardware unit conversion here.
+      // --------------------------------------------------------
+
+      final prediction =
+      _mlService.predict(
+        accX: accX,
+        accY: accY,
+        accZ: accZ,
+        gyroX: gyroX,
+        gyroY: gyroY,
+        gyroZ: gyroZ,
+        speedKmh: speedKmh,
+        motionIntensity:
+        motionIntensity,
+      );
+
+
+      print('======================================');
+      print(
+        '🤖 SOFTWARE AI RESULT',
+      );
+
+      print(
+        'Probability: '
+            '${(prediction.probability * 100).toStringAsFixed(2)}%',
+      );
+
+      print(
+        'Prediction: '
+            '${prediction.isCrash ? "🚨 CRASH" : "✅ NO CRASH"}',
+      );
+
+      print('======================================');
+
+
+      // --------------------------------------------------------
+      // IMPORTANT
+      //
+      // Software test is purely AI based.
+      //
+      // Do NOT apply the hardware severity override here.
+      // --------------------------------------------------------
+
+      if (!prediction.isCrash) {
+        print(
+          '✅ SOFTWARE AI SAYS NO CRASH',
+        );
+
+        return;
+      }
+
+
+      // --------------------------------------------------------
+      // CREATE SOFTWARE CRASH DATA
+      // --------------------------------------------------------
+
+      final crash =
+      CrashData(
+        crashId:
+        'AI-TEST-${DateTime.now().millisecondsSinceEpoch}',
+        lat: 12.97160,
+        lng: 77.59460,
+        severity: 4,
+        vehicleType: '4W',
+        accX: accX,
+        accY: accY,
+        accZ: accZ,
+        gyroX: gyroX,
+        gyroY: gyroY,
+        gyroZ: gyroZ,
+        speedKmh: speedKmh,
+        motionIntensity:
+        motionIntensity,
+      );
+
+
+      print('======================================');
+      print(
+        '🚨 AI SOFTWARE CRASH CONFIRMED',
+      );
+      print('======================================');
+
+
+      // --------------------------------------------------------
+      // USE SAME EMERGENCY PIPELINE
+      // --------------------------------------------------------
+
+      await _handleConfirmedCrash(
+        crash,
+      );
+    } catch (e, stackTrace) {
+      print('======================================');
+      print(
+        '❌ SOFTWARE TEST FAILED',
+      );
+
+      print(
+        'Error: $e',
+      );
+
+      print(
+        'Stack trace: $stackTrace',
+      );
+
+      print('======================================');
+    }
+  }
+
+
+  // ============================================================
+  // RESTART BLE SCANNING
+  // ============================================================
+
+  void _restartScanning() {
+    if (!_isListening) {
+      return;
+    }
+
+    if (_scanRestartScheduled) {
+      return;
+    }
+
+    _scanRestartScheduled = true;
+
+    Future.delayed(
+      const Duration(
+        seconds: 3,
+      ),
+          () async {
+        _scanRestartScheduled = false;
+
+        if (!_isListening) {
+          return;
+        }
+
+        if (_device != null) {
+          return;
+        }
+
+        if (_isConnecting) {
+          return;
+        }
+
+        try {
+          print('======================================');
+          print(
+            '🔄 RESTARTING ROADGUARD BLE SCAN',
+          );
+          print('======================================');
+
+
+          if (FlutterBluePlus
+              .isScanningNow) {
+            print(
+              '⚠️ BLE scan already running.',
+            );
+
+            return;
+          }
+
+
+          await FlutterBluePlus.startScan(
+            timeout:
+            const Duration(
+              hours: 1,
+            ),
+          );
+
+
+          print(
+            '✅ BLE SCAN RESTARTED',
+          );
+        } catch (e) {
+          print(
+            '⚠️ BLE RESTART FAILED: $e',
+          );
+        }
+      },
+    );
+  }
+
+
+  // ============================================================
+  // STOP BLE MONITORING
+  // ============================================================
+
+  Future<void> stopListening() async {
+    print('======================================');
+    print(
+      '🛑 EXPLICIT ROADGUARD STOP',
+    );
+    print('======================================');
+
+
+    _isListening = false;
+
+    _packetBuffer = '';
+
+    _scanRestartScheduled = false;
+
+
+    // ----------------------------------------------------------
+    // CHARACTERISTIC
+    // ----------------------------------------------------------
+
+    await _characteristicSub?.cancel();
+
+    _characteristicSub = null;
+
+
+    // ----------------------------------------------------------
+    // CONNECTION
+    // ----------------------------------------------------------
+
+    await _connectionSub?.cancel();
+
+    _connectionSub = null;
+
+
+    // ----------------------------------------------------------
+    // SCAN LISTENER
+    // ----------------------------------------------------------
+
+    await _scanSub?.cancel();
+
+    _scanSub = null;
+
+
+    // ----------------------------------------------------------
+    // STOP SCAN
+    // ----------------------------------------------------------
+
+    try {
+      await FlutterBluePlus.stopScan();
+    } catch (_) {}
+
+
+    // ----------------------------------------------------------
+    // DISCONNECT DEVICE
+    // ----------------------------------------------------------
+
+    if (_device != null) {
+      try {
+        await _device!.disconnect();
+      } catch (_) {}
+    }
+
+
+    _device = null;
+
+    _crashCharacteristic = null;
+
+    _isConnecting = false;
+
+
+    print(
+      '🛑 BLE SCANNING STOPPED',
+    );
+  }
+
+
+  // ============================================================
+  // CLEAR CRASH CACHE
+  // ============================================================
+
+  void clearSeenCrashIds() {
+    _seenCrashIds.clear();
+
+    print(
+      '🧹 CRASH CACHE CLEARED',
+    );
+  }
+
+
+  // ============================================================
+  // UI DISPOSE
+  //
+  // DO NOT STOP BLE HERE.
+  //
+  // Foreground service owns monitoring.
+  //
+  // ============================================================
+
+  void dispose() {
+    print(
+      'ℹ️ BleService UI dispose called.',
+    );
+
+    print(
+      '📡 BLE MONITORING REMAINS ACTIVE.',
+    );
+
+    // IMPORTANT:
+    //
+    // Do NOT call stopListening() here.
+  }
+
+
+  // ============================================================
+  // FULL SHUTDOWN
+  // ============================================================
+
+  Future<void> shutdown() async {
+    print(
+      '🛑 ROADGUARD FULL SHUTDOWN',
+    );
+
+    await stopListening();
+
+    _mlService.dispose();
+
+    _aiInitialized = false;
+
+    _seenCrashIds.clear();
+
+    print(
+      '🛑 ROADGUARD SHUTDOWN COMPLETE',
+    );
+  }
+}
