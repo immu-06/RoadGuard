@@ -1,0 +1,523 @@
+import 'package:flutter_local_notifications/flutter_local_notifications.dart';
+import 'package:android_intent_plus/android_intent.dart';
+
+import '../models/crash_model.dart';
+import '../main.dart';
+
+// ============================================================
+// NOTIFICATION SERVICE
+// ============================================================
+//
+// Handles:
+//
+// 1. Normal crash notification
+// 2. Full-screen notification
+// 3. Notification tap
+// 4. APP LAUNCH CAUSED BY NOTIFICATION
+//
+// ============================================================
+
+class NotificationService {
+  static final FlutterLocalNotificationsPlugin _plugin =
+  FlutterLocalNotificationsPlugin();
+
+  static CrashData? _pendingCrash;
+
+  static String? _lastNavigationCrashId;
+
+  static String? _pendingLaunchPacket;
+
+  static bool _initialized = false;
+
+  // ============================================================
+  // INITIALIZE
+  // ============================================================
+
+  static Future<void> init() async {
+    if (_initialized) {
+      return;
+    }
+
+    print('======================================');
+    print('🔔 INITIALIZING NOTIFICATION SERVICE');
+    print('======================================');
+
+    const androidInit =
+    AndroidInitializationSettings(
+      '@mipmap/ic_launcher',
+    );
+
+    const initSettings =
+    InitializationSettings(
+      android: androidInit,
+    );
+
+    await _plugin.initialize(
+      settings: initSettings,
+      onDidReceiveNotificationResponse:
+          (NotificationResponse response) {
+        print('======================================');
+        print('🔔 NOTIFICATION RESPONSE RECEIVED');
+        print('======================================');
+
+        final payload = response.payload;
+
+        print('Payload: $payload');
+
+        if (payload == null || payload.isEmpty) {
+          print('⚠️ Notification payload is empty');
+          return;
+        }
+
+        // The complete CR|... packet is stored as payload.
+        final crash = CrashData.tryParse(
+          payload.trim(),
+        );
+
+        if (crash == null) {
+          print(
+            '❌ COULD NOT PARSE NOTIFICATION PAYLOAD',
+          );
+          return;
+        }
+
+        _pendingCrash = crash;
+
+        openEmergencyScreen(crash);
+      },
+    );
+
+    // ==========================================================
+    // CRASH NOTIFICATION CHANNEL
+    // ==========================================================
+
+    const channel =
+    AndroidNotificationChannel(
+      'crash_alerts_v2',
+      'Crash Alerts',
+      description:
+      'Urgent crash detection alerts',
+      importance: Importance.max,
+      playSound: true,
+      enableVibration: true,
+      sound: UriAndroidNotificationSound(
+        'content://settings/system/alarm_alert',
+      ),
+    );
+
+    final androidPlugin =
+    _plugin
+        .resolvePlatformSpecificImplementation<
+        AndroidFlutterLocalNotificationsPlugin>();
+
+    await androidPlugin?.createNotificationChannel(
+      channel,
+    );
+
+    // Android 13+
+    await androidPlugin
+        ?.requestNotificationsPermission();
+
+    // Android 14+
+    try {
+      await androidPlugin
+          ?.requestFullScreenIntentPermission();
+
+      print(
+        '✅ Full-screen intent permission requested',
+      );
+    } catch (e) {
+      print(
+        '⚠️ Full-screen permission unavailable: $e',
+      );
+    }
+
+    // ==========================================================
+    // IMPORTANT:
+    //
+    // CHECK WHETHER THE APP WAS LAUNCHED BY A NOTIFICATION.
+    //
+    // This is required when:
+    //
+    // Screen OFF
+    //     ↓
+    // Crash notification
+    //     ↓
+    // Full-screen intent
+    //     ↓
+    // Flutter app starts
+    //
+    // ==========================================================
+
+    try {
+      final launchDetails =
+      await _plugin
+          .getNotificationAppLaunchDetails();
+
+      if (launchDetails != null &&
+          launchDetails.didNotificationLaunchApp) {
+        print('======================================');
+        print('🚨 APP WAS LAUNCHED BY CRASH NOTIFICATION');
+        print('======================================');
+
+        final response =
+            launchDetails.notificationResponse;
+
+        final payload = response?.payload;
+
+        print('Launch payload: $payload');
+
+        if (payload != null &&
+            payload.isNotEmpty) {
+          _pendingLaunchPacket =
+              payload;
+
+          final crash =
+          CrashData.tryParse(
+            payload.trim(),
+          );
+
+          if (crash != null) {
+            _pendingCrash = crash;
+
+            print(
+              '✅ LAUNCH CRASH DATA RECOVERED',
+            );
+
+            print(
+              'Crash ID: ${crash.crashId}',
+            );
+          } else {
+            print(
+              '❌ COULD NOT PARSE LAUNCH CRASH',
+            );
+          }
+        }
+      } else {
+        print(
+          'ℹ️ App was not launched by notification',
+        );
+      }
+    } catch (e, stackTrace) {
+      print(
+        '❌ NOTIFICATION LAUNCH CHECK FAILED',
+      );
+
+      print('Error: $e');
+      print('Stack: $stackTrace');
+    }
+
+    _initialized = true;
+
+    print('======================================');
+    print('✅ NOTIFICATION SERVICE READY');
+    print('======================================');
+  }
+
+  // ============================================================
+  // HANDLE CRASH AFTER FLUTTER UI IS READY
+  // ============================================================
+  //
+  // MUST be called AFTER runApp().
+  //
+  // ============================================================
+
+  static void handleLaunchAfterAppStarted() {
+    print('======================================');
+    print('🔎 CHECKING PENDING NOTIFICATION LAUNCH');
+    print('======================================');
+
+    if (_pendingLaunchPacket == null) {
+      print(
+        'ℹ️ No pending notification launch',
+      );
+      return;
+    }
+
+    final packet =
+    _pendingLaunchPacket!;
+
+    _pendingLaunchPacket = null;
+
+    final crash =
+    CrashData.tryParse(
+      packet.trim(),
+    );
+
+    if (crash == null) {
+      print(
+        '❌ PENDING LAUNCH PACKET INVALID',
+      );
+      return;
+    }
+
+    _pendingCrash = crash;
+
+    print('======================================');
+    print('🚨 OPENING CRASH FROM COLD START');
+    print('======================================');
+
+    print(
+      'Crash ID: ${crash.crashId}',
+    );
+
+    // Give MaterialApp/Navigator time to build.
+    Future.delayed(
+      const Duration(
+        milliseconds: 500,
+      ),
+          () {
+        openEmergencyScreen(crash);
+      },
+    );
+  }
+
+  // ============================================================
+  // SHOW CRASH ALERT
+  // ============================================================
+
+  static Future<void> showCrashAlert(
+      CrashData crash,
+      ) async {
+    _pendingCrash = crash;
+
+    print('======================================');
+    print('🚨 SHOWING MAIN-ISOLATE CRASH ALERT');
+    print('======================================');
+
+    print(
+      'Crash ID: ${crash.crashId}',
+    );
+
+    print(
+      'Severity: ${crash.severity}',
+    );
+
+    print(
+      'Vehicle: ${crash.vehicleType}',
+    );
+
+    print(
+      'Location: ${crash.lat}, ${crash.lng}',
+    );
+
+    final androidDetails =
+    AndroidNotificationDetails(
+      'crash_alerts_v2',
+      'Crash Alerts',
+
+      channelDescription:
+      'Urgent crash detection alerts',
+
+      importance: Importance.max,
+      priority: Priority.max,
+
+      fullScreenIntent: true,
+
+      category:
+      AndroidNotificationCategory.alarm,
+
+      ongoing: true,
+      autoCancel: false,
+
+      playSound: true,
+      enableVibration: true,
+
+      sound:
+      const UriAndroidNotificationSound(
+        'content://settings/system/alarm_alert',
+      ),
+    );
+
+    // ==========================================================
+    // IMPORTANT:
+    //
+    // STORE THE COMPLETE CRASH PACKET.
+    //
+    // Previously this was only:
+    //
+    //     crash.crashId
+    //
+    // That is not enough to reconstruct CrashData after a
+    // cold-start.
+    //
+    // ==========================================================
+
+    final packet = [
+      'CR',
+      crash.crashId,
+      crash.lat.toString(),
+      crash.lng.toString(),
+      crash.severity.toString(),
+      crash.vehicleType,
+      crash.accX.toString(),
+      crash.accY.toString(),
+      crash.accZ.toString(),
+      crash.gyroX.toString(),
+      crash.gyroY.toString(),
+      crash.gyroZ.toString(),
+      crash.speedKmh.toString(),
+      crash.motionIntensity.toString(),
+    ].join('|');
+
+    await _plugin.show(
+      id:
+      crash.crashId.hashCode &
+      0x7fffffff,
+
+      title:
+      '🚨 CRASH DETECTED',
+
+      body:
+      'Severity ${crash.severity} — '
+          '${crash.vehicleType} — '
+          'Emergency assistance required',
+
+      notificationDetails:
+      NotificationDetails(
+        android: androidDetails,
+      ),
+
+      // COMPLETE CRASH DATA
+      payload: packet,
+    );
+
+    print(
+      '✅ CRASH NOTIFICATION SHOWN',
+    );
+
+    // If app is already visible, open screen immediately.
+    openEmergencyScreen(crash);
+  }
+
+  // ============================================================
+  // OPEN EMERGENCY SCREEN
+  // ============================================================
+
+  static void openEmergencyScreen(
+      CrashData crash,
+      ) {
+    print('======================================');
+    print('🚨 OPENING EMERGENCY SCREEN');
+    print('======================================');
+
+    // ----------------------------------------------------------
+    // DUPLICATE PROTECTION
+    // ----------------------------------------------------------
+
+    if (_lastNavigationCrashId ==
+        crash.crashId) {
+      print(
+        '⚠️ Emergency screen already opened for '
+            '${crash.crashId}',
+      );
+      return;
+    }
+
+    final navigator =
+        navigatorKey.currentState;
+
+    // ----------------------------------------------------------
+    // NAVIGATOR NOT READY
+    // ----------------------------------------------------------
+
+    if (navigator == null) {
+      print(
+        '⚠️ Navigator is not ready yet.',
+      );
+
+      // DO NOT set _lastNavigationCrashId here.
+      //
+      // Otherwise a failed navigation can lock out the
+      // retry.
+      //
+
+      Future.delayed(
+        const Duration(
+          milliseconds: 700,
+        ),
+            () {
+          final retryNavigator =
+              navigatorKey.currentState;
+
+          if (retryNavigator == null) {
+            print(
+              '❌ Navigator still unavailable',
+            );
+            return;
+          }
+
+          if (_lastNavigationCrashId ==
+              crash.crashId) {
+            return;
+          }
+
+          _lastNavigationCrashId =
+              crash.crashId;
+
+          _pendingCrash = crash;
+
+          retryNavigator.pushNamed(
+            '/emergency',
+            arguments: crash,
+          );
+
+          print(
+            '✅ EMERGENCY SCREEN OPENED '
+                '(RETRY)',
+          );
+        },
+      );
+
+      return;
+    }
+
+    // ----------------------------------------------------------
+    // NAVIGATOR READY
+    // ----------------------------------------------------------
+
+    _lastNavigationCrashId =
+        crash.crashId;
+
+    _pendingCrash = crash;
+
+    navigator.pushNamed(
+      '/emergency',
+      arguments: crash,
+    );
+
+    print(
+      '✅ EMERGENCY SCREEN NAVIGATION SENT',
+    );
+  }
+
+  // ============================================================
+  // CLEAR CURRENT CRASH
+  // ============================================================
+
+  static void clearPendingCrash() {
+    _pendingCrash = null;
+  }
+
+  // ============================================================
+  // RESET NAVIGATION LOCK
+  // ============================================================
+
+  static void resetEmergencyNavigation() {
+    _lastNavigationCrashId = null;
+  }
+
+  // ============================================================
+  // DND SETTINGS
+  // ============================================================
+
+  static Future<void> openDndSettings() async {
+    const intent =
+    AndroidIntent(
+      action:
+      'android.settings.NOTIFICATION_POLICY_ACCESS_SETTINGS',
+    );
+
+    await intent.launch();
+  }
+}
