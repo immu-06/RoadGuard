@@ -1,0 +1,474 @@
+import 'dart:convert';
+
+import 'package:flutter/services.dart';
+import 'package:tflite_flutter/tflite_flutter.dart';
+
+
+// ============================================================
+// CRASH PREDICTION
+// ============================================================
+
+class CrashPrediction {
+  final bool isCrash;
+  final double probability;
+
+  const CrashPrediction({
+    required this.isCrash,
+    required this.probability,
+  });
+
+  int get percentage =>
+      (probability * 100).round();
+}
+
+
+// ============================================================
+// OFFLINE ML SERVICE
+// ============================================================
+//
+// Model:
+//     assets/ml/crash_model.tflite
+//
+// Scaler:
+//     assets/ml/scaler.json
+//
+// FEATURES MUST REMAIN IN THIS EXACT ORDER:
+//
+// 1. Acc_X
+// 2. Acc_Y
+// 3. Acc_Z
+// 4. Gyro_X
+// 5. Gyro_Y
+// 6. Gyro_Z
+// 7. Speed_kmh
+// 8. Motion_Intensity
+//
+// ============================================================
+
+class MlService {
+  Interpreter? _interpreter;
+
+  List<double>? _mean;
+  List<double>? _scale;
+
+  bool _initialized = false;
+
+  // ============================================================
+  // INITIALIZE
+  // ============================================================
+
+  Future<void> initialize() async {
+    if (_initialized &&
+        _interpreter != null &&
+        _mean != null &&
+        _scale != null) {
+      return;
+    }
+
+    print('======================================');
+    print('🤖 INITIALIZING OFFLINE ML');
+    print('======================================');
+
+    try {
+      // --------------------------------------------------------
+      // LOAD TFLITE MODEL
+      // --------------------------------------------------------
+
+      _interpreter = await Interpreter.fromAsset(
+        'assets/ml/crash_model.tflite',
+      );
+
+      // --------------------------------------------------------
+      // LOAD SCALER
+      // --------------------------------------------------------
+
+      final scalerJson = await rootBundle.loadString(
+        'assets/ml/scaler.json',
+      );
+
+      final scaler =
+      jsonDecode(scalerJson) as Map<String, dynamic>;
+
+      // --------------------------------------------------------
+      // READ MEAN
+      // --------------------------------------------------------
+
+      final meanRaw = scaler['mean'];
+
+      if (meanRaw is! List) {
+        throw StateError(
+          'scaler.json does not contain a valid "mean" list.',
+        );
+      }
+
+      _mean = meanRaw
+          .map(
+            (value) => (value as num).toDouble(),
+      )
+          .toList();
+
+      // --------------------------------------------------------
+      // READ SCALE
+      // --------------------------------------------------------
+
+      final scaleRaw = scaler['scale'];
+
+      if (scaleRaw is! List) {
+        throw StateError(
+          'scaler.json does not contain a valid "scale" list.',
+        );
+      }
+
+      _scale = scaleRaw
+          .map(
+            (value) => (value as num).toDouble(),
+      )
+          .toList();
+
+      // --------------------------------------------------------
+      // VALIDATE SCALER
+      // --------------------------------------------------------
+
+      if (_mean!.length != 8) {
+        throw StateError(
+          'Expected 8 scaler mean values, '
+              'found ${_mean!.length}.',
+        );
+      }
+
+      if (_scale!.length != 8) {
+        throw StateError(
+          'Expected 8 scaler scale values, '
+              'found ${_scale!.length}.',
+        );
+      }
+
+      // --------------------------------------------------------
+      // PRINT MODEL INFORMATION
+      // --------------------------------------------------------
+
+      final inputShape =
+          _interpreter!.getInputTensor(0).shape;
+
+      final outputShape =
+          _interpreter!.getOutputTensor(0).shape;
+
+      print('======================================');
+      print('✅ OFFLINE ML MODEL LOADED');
+      print('======================================');
+
+      print(
+        'Input shape: $inputShape',
+      );
+
+      print(
+        'Output shape: $outputShape',
+      );
+
+      print(
+        'Features: ${_mean!.length}',
+      );
+
+      print(
+        'Feature order:',
+      );
+
+      print(
+        '1. Acc_X',
+      );
+
+      print(
+        '2. Acc_Y',
+      );
+
+      print(
+        '3. Acc_Z',
+      );
+
+      print(
+        '4. Gyro_X',
+      );
+
+      print(
+        '5. Gyro_Y',
+      );
+
+      print(
+        '6. Gyro_Z',
+      );
+
+      print(
+        '7. Speed_kmh',
+      );
+
+      print(
+        '8. Motion_Intensity',
+      );
+
+      print('======================================');
+
+      _initialized = true;
+
+      print(
+        '🤖 OFFLINE AI READY',
+      );
+
+      print('======================================');
+    } catch (e, stackTrace) {
+      print('======================================');
+      print('❌ OFFLINE ML INITIALIZATION FAILED');
+      print('Error: $e');
+      print('Stack trace: $stackTrace');
+      print('======================================');
+
+      _interpreter?.close();
+
+      _interpreter = null;
+      _mean = null;
+      _scale = null;
+      _initialized = false;
+
+      rethrow;
+    }
+  }
+
+
+  // ============================================================
+  // PREDICT
+  // ============================================================
+  //
+  // IMPORTANT:
+  //
+  // Values supplied to this method MUST already be in the same
+  // units used during model training.
+  //
+  // Acceleration:
+  //     m/s²
+  //
+  // Gyroscope:
+  //     rad/s
+  //
+  // Speed:
+  //     km/h
+  //
+  // Motion intensity:
+  //     m/s²
+  //
+  // Hardware conversion is performed in BleService.
+  //
+  // Software test data already uses these units.
+  //
+  // ============================================================
+
+  CrashPrediction predict({
+    required double accX,
+    required double accY,
+    required double accZ,
+    required double gyroX,
+    required double gyroY,
+    required double gyroZ,
+    required double speedKmh,
+    required double motionIntensity,
+  }) {
+    if (!_initialized ||
+        _interpreter == null ||
+        _mean == null ||
+        _scale == null) {
+      throw StateError(
+        'ML service has not been initialized.',
+      );
+    }
+
+    // ----------------------------------------------------------
+    // FEATURE VECTOR
+    // ----------------------------------------------------------
+
+    final values = <double>[
+      accX,
+      accY,
+      accZ,
+      gyroX,
+      gyroY,
+      gyroZ,
+      speedKmh,
+      motionIntensity,
+    ];
+
+    if (values.length != 8) {
+      throw StateError(
+        'ML requires exactly 8 features.',
+      );
+    }
+
+    // ----------------------------------------------------------
+    // NORMALIZATION
+    //
+    // Same formula used by StandardScaler during training:
+    //
+    // normalized = (value - mean) / scale
+    // ----------------------------------------------------------
+
+    final normalized =
+    List<double>.generate(
+      values.length,
+          (index) {
+        final scale = _scale![index];
+
+        if (scale == 0) {
+          throw StateError(
+            'Scaler value at index $index is zero.',
+          );
+        }
+
+        return (
+            values[index] - _mean![index]
+        ) / scale;
+      },
+    );
+
+    // ----------------------------------------------------------
+    // TFLITE INPUT
+    //
+    // Model input shape:
+    //
+    // [1, 8]
+    // ----------------------------------------------------------
+
+    final input = <List<double>>[
+      normalized,
+    ];
+
+    // ----------------------------------------------------------
+    // TFLITE OUTPUT
+    //
+    // Model output shape:
+    //
+    // [1, 1]
+    // ----------------------------------------------------------
+
+    final output = <List<double>>[
+      [0.0],
+    ];
+
+    // ----------------------------------------------------------
+    // RUN MODEL
+    // ----------------------------------------------------------
+
+    _interpreter!.run(
+      input,
+      output,
+    );
+
+    // ----------------------------------------------------------
+    // READ PROBABILITY
+    // ----------------------------------------------------------
+
+    double probability =
+    output[0][0];
+
+    // Safety clamp.
+    if (probability < 0.0) {
+      probability = 0.0;
+    }
+
+    if (probability > 1.0) {
+      probability = 1.0;
+    }
+
+    // ----------------------------------------------------------
+    // DECISION THRESHOLD
+    // ----------------------------------------------------------
+
+    const threshold = 0.50;
+
+    final isCrash =
+        probability >= threshold;
+
+    // ----------------------------------------------------------
+    // LOG
+    // ----------------------------------------------------------
+
+    print('======================================');
+    print('🤖 AI CRASH PREDICTION');
+    print('======================================');
+
+    print(
+      'AccX: $accX m/s²',
+    );
+
+    print(
+      'AccY: $accY m/s²',
+    );
+
+    print(
+      'AccZ: $accZ m/s²',
+    );
+
+    print(
+      'GyroX: $gyroX rad/s',
+    );
+
+    print(
+      'GyroY: $gyroY rad/s',
+    );
+
+    print(
+      'GyroZ: $gyroZ rad/s',
+    );
+
+    print(
+      'Speed: $speedKmh km/h',
+    );
+
+    print(
+      'Motion: $motionIntensity m/s²',
+    );
+
+    print(
+      'Crash probability: '
+          '${(probability * 100).toStringAsFixed(2)}%',
+    );
+
+    print(
+      'Prediction: '
+          '${isCrash ? "🚨 CRASH" : "✅ NO CRASH"}',
+    );
+
+    print('======================================');
+
+    return CrashPrediction(
+      isCrash: isCrash,
+      probability: probability,
+    );
+  }
+
+
+  // ============================================================
+  // STATUS
+  // ============================================================
+
+  bool get isReady =>
+      _initialized &&
+          _interpreter != null &&
+          _mean != null &&
+          _scale != null;
+
+
+  // ============================================================
+  // DISPOSE
+  // ============================================================
+
+  void dispose() {
+    print(
+      '🛑 Offline ML model released',
+    );
+
+    _interpreter?.close();
+
+    _interpreter = null;
+    _mean = null;
+    _scale = null;
+
+    _initialized = false;
+  }
+}
