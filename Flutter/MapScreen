@@ -1,0 +1,848 @@
+import 'package:flutter/material.dart';
+import 'package:flutter_map/flutter_map.dart';
+import 'package:latlong2/latlong.dart';
+
+import '../main.dart';
+
+class MapScreen extends StatefulWidget {
+  // ============================================================
+  // OPTIONAL CRASH LOCATION
+  // ============================================================
+
+  final double? crashLatitude;
+  final double? crashLongitude;
+  final String? crashId;
+
+  const MapScreen({
+    super.key,
+    this.crashLatitude,
+    this.crashLongitude,
+    this.crashId,
+  });
+
+  @override
+  State<MapScreen> createState() => _MapScreenState();
+}
+
+class _MapScreenState extends State<MapScreen> {
+  final MapController _mapController =
+  MapController();
+
+  // ============================================================
+  // FALLBACK LOCATION
+  // ============================================================
+
+  static const LatLng _fallbackCenter =
+  LatLng(
+    8.7139,
+    77.7567,
+  );
+
+  // ============================================================
+  // SUPABASE CRASH STREAM
+  // ============================================================
+
+  final _crashStream = supabase
+      .from('crashes')
+      .stream(primaryKey: ['id'])
+      .order(
+    'created_at',
+    ascending: false,
+  );
+
+  // ============================================================
+  // CHECK FOCUSED CRASH
+  // ============================================================
+
+  bool get _hasFocusedCrash =>
+      widget.crashLatitude != null &&
+          widget.crashLongitude != null;
+
+  // ============================================================
+  // FOCUSED CRASH LOCATION
+  // ============================================================
+
+  LatLng get _focusedLocation {
+    return LatLng(
+      widget.crashLatitude!,
+      widget.crashLongitude!,
+    );
+  }
+
+  // ============================================================
+  // SEVERITY COLOR
+  // ============================================================
+
+  Color _severityColor(dynamic severity) {
+    final level =
+        int.tryParse(
+          severity.toString(),
+        ) ??
+            0;
+
+    if (level >= 4) {
+      return Colors.red;
+    }
+
+    if (level == 3) {
+      return Colors.orange;
+    }
+
+    if (level == 2) {
+      return Colors.yellow.shade800;
+    }
+
+    return Colors.grey;
+  }
+
+  // ============================================================
+  // PARSE LOCATION
+  // ============================================================
+
+  LatLng? _parseLocation(
+      dynamic location,
+      ) {
+    if (location == null) {
+      return null;
+    }
+
+    final text =
+    location.toString();
+
+    final parts =
+    text.split(',');
+
+    if (parts.length != 2) {
+      return null;
+    }
+
+    final lat =
+    double.tryParse(
+      parts[0].trim(),
+    );
+
+    final lng =
+    double.tryParse(
+      parts[1].trim(),
+    );
+
+    if (lat == null ||
+        lng == null) {
+      return null;
+    }
+
+    return LatLng(
+      lat,
+      lng,
+    );
+  }
+
+  // ============================================================
+  // BUILD
+  // ============================================================
+
+  @override
+  Widget build(
+      BuildContext context,
+      ) {
+    if (_hasFocusedCrash) {
+      return _buildFocusedCrashMap();
+    }
+
+    return _buildAllCrashMap();
+  }
+
+  // ============================================================
+  // FOCUSED CRASH MAP
+  // ============================================================
+
+  Widget _buildFocusedCrashMap() {
+    final location =
+        _focusedLocation;
+
+    return Scaffold(
+      appBar: AppBar(
+        title: const Text(
+          'Crash Location',
+        ),
+      ),
+
+      body: Stack(
+        children: [
+          FlutterMap(
+            mapController:
+            _mapController,
+
+            options: MapOptions(
+              initialCenter:
+              location,
+              initialZoom: 16,
+            ),
+
+            children: [
+              // ==================================================
+              // MAP TILES
+              // ==================================================
+
+              TileLayer(
+                urlTemplate:
+                'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
+
+                userAgentPackageName:
+                'com.example.crash_alert_app',
+              ),
+
+              // ==================================================
+              // CRASH MARKER
+              // ==================================================
+
+              MarkerLayer(
+                markers: [
+                  Marker(
+                    point: location,
+
+                    width: 70,
+                    height: 70,
+
+                    child: const Icon(
+                      Icons.location_on,
+                      color: Colors.red,
+                      size: 60,
+
+                      shadows: [
+                        Shadow(
+                          blurRadius: 5,
+                          color: Colors.black54,
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
+              ),
+            ],
+          ),
+
+          // ======================================================
+          // CRASH INFORMATION
+          // ======================================================
+
+          Positioned(
+            top: 16,
+            left: 16,
+            right: 16,
+
+            child: Card(
+              elevation: 5,
+
+              child: Padding(
+                padding:
+                const EdgeInsets.all(14),
+
+                child: Column(
+                  crossAxisAlignment:
+                  CrossAxisAlignment.start,
+
+                  children: [
+                    const Row(
+                      children: [
+                        Icon(
+                          Icons
+                              .warning_amber_rounded,
+                          color: Colors.red,
+                        ),
+
+                        SizedBox(width: 8),
+
+                        Text(
+                          'CRASH LOCATION',
+                          style: TextStyle(
+                            fontWeight:
+                            FontWeight.bold,
+                            fontSize: 17,
+                          ),
+                        ),
+                      ],
+                    ),
+
+                    const SizedBox(height: 8),
+
+                    if (widget.crashId !=
+                        null)
+                      Text(
+                        'Crash ID: '
+                            '${widget.crashId}',
+                        style:
+                        const TextStyle(
+                          fontWeight:
+                          FontWeight.w600,
+                        ),
+                      ),
+
+                    const SizedBox(height: 4),
+
+                    Text(
+                      'Latitude: '
+                          '${location.latitude.toStringAsFixed(6)}',
+                    ),
+
+                    Text(
+                      'Longitude: '
+                          '${location.longitude.toStringAsFixed(6)}',
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ),
+
+          // ======================================================
+          // MAP CONTROLS
+          // ======================================================
+
+          Positioned(
+            bottom: 20,
+            right: 16,
+
+            child: Column(
+              children: [
+                FloatingActionButton.small(
+                  heroTag:
+                  'focused_zoom_in',
+
+                  onPressed: () {
+                    _mapController
+                        .move(
+                      _mapController
+                          .camera
+                          .center,
+
+                      _mapController
+                          .camera
+                          .zoom +
+                          1,
+                    );
+                  },
+
+                  child:
+                  const Icon(
+                    Icons.add,
+                  ),
+                ),
+
+                const SizedBox(
+                  height: 8,
+                ),
+
+                FloatingActionButton.small(
+                  heroTag:
+                  'focused_zoom_out',
+
+                  onPressed: () {
+                    _mapController
+                        .move(
+                      _mapController
+                          .camera
+                          .center,
+
+                      _mapController
+                          .camera
+                          .zoom -
+                          1,
+                    );
+                  },
+
+                  child:
+                  const Icon(
+                    Icons.remove,
+                  ),
+                ),
+
+                const SizedBox(
+                  height: 8,
+                ),
+
+                FloatingActionButton.small(
+                  heroTag:
+                  'focused_location',
+
+                  tooltip:
+                  'Crash location',
+
+                  onPressed: () {
+                    _mapController
+                        .move(
+                      location,
+                      16,
+                    );
+                  },
+
+                  child:
+                  const Icon(
+                    Icons.my_location,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  // ============================================================
+  // NORMAL ALL CRASH MAP
+  // ============================================================
+
+  Widget _buildAllCrashMap() {
+    return Scaffold(
+      appBar: AppBar(
+        title: const Text(
+          'Crash Map',
+        ),
+      ),
+
+      body: StreamBuilder<
+          List<Map<String, dynamic>>>(
+        stream: _crashStream,
+
+        builder:
+            (context, snapshot) {
+          // ------------------------------------------------------
+          // LOADING
+          // ------------------------------------------------------
+
+          if (snapshot.connectionState ==
+              ConnectionState.waiting) {
+            return const Center(
+              child:
+              CircularProgressIndicator(),
+            );
+          }
+
+          // ------------------------------------------------------
+          // ERROR
+          // ------------------------------------------------------
+
+          if (snapshot.hasError) {
+            return Center(
+              child: Padding(
+                padding:
+                const EdgeInsets.all(
+                  20,
+                ),
+
+                child: Text(
+                  'Unable to load crash locations.\n\n'
+                      '${snapshot.error}',
+
+                  textAlign:
+                  TextAlign.center,
+                ),
+              ),
+            );
+          }
+
+          final crashes =
+              snapshot.data ?? [];
+
+          // ------------------------------------------------------
+          // VALID CRASHES
+          // ------------------------------------------------------
+
+          final validCrashes =
+          crashes.where(
+                (crash) {
+              return _parseLocation(
+                crash['location'],
+              ) !=
+                  null;
+            },
+          ).toList();
+
+          // ------------------------------------------------------
+          // NO CRASHES
+          // ------------------------------------------------------
+
+          if (validCrashes.isEmpty) {
+            return Stack(
+              children: [
+                FlutterMap(
+                  mapController:
+                  _mapController,
+
+                  options:
+                  const MapOptions(
+                    initialCenter:
+                    _fallbackCenter,
+                    initialZoom: 12,
+                  ),
+
+                  children: [
+                    TileLayer(
+                      urlTemplate:
+                      'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
+
+                      userAgentPackageName:
+                      'com.example.crash_alert_app',
+                    ),
+                  ],
+                ),
+
+                const Positioned(
+                  top: 16,
+                  left: 16,
+                  right: 16,
+
+                  child: Card(
+                    child: Padding(
+                      padding:
+                      EdgeInsets.all(
+                        14,
+                      ),
+
+                      child: Text(
+                        'No crash locations yet.',
+                        textAlign:
+                        TextAlign.center,
+                      ),
+                    ),
+                  ),
+                ),
+              ],
+            );
+          }
+
+          // ------------------------------------------------------
+          // LATEST CRASH LOCATION
+          // ------------------------------------------------------
+
+          final firstLocation =
+          _parseLocation(
+            validCrashes
+                .first['location'],
+          )!;
+
+          return Stack(
+            children: [
+              FlutterMap(
+                mapController:
+                _mapController,
+
+                options: MapOptions(
+                  initialCenter:
+                  firstLocation,
+                  initialZoom: 14,
+                ),
+
+                children: [
+                  // ==============================================
+                  // MAP TILES
+                  // ==============================================
+
+                  TileLayer(
+                    urlTemplate:
+                    'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
+
+                    userAgentPackageName:
+                    'com.example.crash_alert_app',
+                  ),
+
+                  // ==============================================
+                  // CRASH MARKERS
+                  // ==============================================
+
+                  MarkerLayer(
+                    markers:
+                    validCrashes.map(
+                          (crash) {
+                        final location =
+                        _parseLocation(
+                          crash[
+                          'location'],
+                        )!;
+
+                        return Marker(
+                          point:
+                          location,
+
+                          width: 50,
+                          height: 50,
+
+                          child:
+                          GestureDetector(
+                            onTap: () {
+                              _showCrashDetails(
+                                context,
+                                crash,
+                                location,
+                              );
+                            },
+
+                            child:
+                            Icon(
+                              Icons
+                                  .location_on,
+
+                              size: 48,
+
+                              color:
+                              _severityColor(
+                                crash[
+                                'severity'],
+                              ),
+
+                              shadows: const [
+                                Shadow(
+                                  blurRadius:
+                                  4,
+                                  color:
+                                  Colors.black45,
+                                ),
+                              ],
+                            ),
+                          ),
+                        );
+                      },
+                    ).toList(),
+                  ),
+                ],
+              ),
+
+              // ==================================================
+              // CRASH COUNT
+              // ==================================================
+
+              Positioned(
+                top: 16,
+                left: 16,
+
+                child: Card(
+                  child: Padding(
+                    padding:
+                    const EdgeInsets
+                        .symmetric(
+                      horizontal: 14,
+                      vertical: 10,
+                    ),
+
+                    child: Row(
+                      mainAxisSize:
+                      MainAxisSize.min,
+
+                      children: [
+                        const Icon(
+                          Icons
+                              .warning_amber_rounded,
+                          color: Colors.red,
+                        ),
+
+                        const SizedBox(
+                          width: 8,
+                        ),
+
+                        Text(
+                          '${validCrashes.length} crash'
+                              '${validCrashes.length == 1 ? '' : 'es'}',
+
+                          style:
+                          const TextStyle(
+                            fontWeight:
+                            FontWeight
+                                .bold,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+              ),
+
+              // ==================================================
+              // MAP CONTROLS
+              // ==================================================
+
+              Positioned(
+                bottom: 20,
+                right: 16,
+
+                child: Column(
+                  children: [
+                    FloatingActionButton.small(
+                      heroTag:
+                      'map_zoom_in',
+
+                      onPressed: () {
+                        _mapController
+                            .move(
+                          _mapController
+                              .camera
+                              .center,
+
+                          _mapController
+                              .camera
+                              .zoom +
+                              1,
+                        );
+                      },
+
+                      child:
+                      const Icon(
+                        Icons.add,
+                      ),
+                    ),
+
+                    const SizedBox(
+                      height: 8,
+                    ),
+
+                    FloatingActionButton.small(
+                      heroTag:
+                      'map_zoom_out',
+
+                      onPressed: () {
+                        _mapController
+                            .move(
+                          _mapController
+                              .camera
+                              .center,
+
+                          _mapController
+                              .camera
+                              .zoom -
+                              1,
+                        );
+                      },
+
+                      child:
+                      const Icon(
+                        Icons.remove,
+                      ),
+                    ),
+
+                    const SizedBox(
+                      height: 8,
+                    ),
+
+                    FloatingActionButton.small(
+                      heroTag:
+                      'map_latest',
+
+                      tooltip:
+                      'Latest crash',
+
+                      onPressed: () {
+                        _mapController
+                            .move(
+                          firstLocation,
+                          16,
+                        );
+                      },
+
+                      child:
+                      const Icon(
+                        Icons.my_location,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          );
+        },
+      ),
+    );
+  }
+
+  // ============================================================
+  // CRASH DETAILS
+  // ============================================================
+
+  void _showCrashDetails(
+      BuildContext context,
+      Map<String, dynamic> crash,
+      LatLng location,
+      ) {
+    showModalBottomSheet(
+      context: context,
+
+      builder: (context) {
+        return SafeArea(
+          child: Padding(
+            padding:
+            const EdgeInsets.all(20),
+
+            child: Column(
+              mainAxisSize:
+              MainAxisSize.min,
+
+              crossAxisAlignment:
+              CrossAxisAlignment.start,
+
+              children: [
+                const Text(
+                  'Crash Details',
+
+                  style: TextStyle(
+                    fontSize: 20,
+                    fontWeight:
+                    FontWeight.bold,
+                  ),
+                ),
+
+                const SizedBox(
+                  height: 16,
+                ),
+
+                Text(
+                  'Crash ID: '
+                      '${crash['crash_id'] ?? '-'}',
+                ),
+
+                const SizedBox(
+                  height: 8,
+                ),
+
+                Text(
+                  'Latitude: '
+                      '${location.latitude.toStringAsFixed(6)}',
+                ),
+
+                Text(
+                  'Longitude: '
+                      '${location.longitude.toStringAsFixed(6)}',
+                ),
+
+                const SizedBox(
+                  height: 8,
+                ),
+
+                Text(
+                  'Severity: '
+                      '${crash['severity'] ?? '-'}',
+                ),
+
+                Text(
+                  'Vehicle: '
+                      '${crash['vehicle_type'] ?? '-'}',
+                ),
+
+                const SizedBox(
+                  height: 8,
+                ),
+
+                Text(
+                  'Time: '
+                      '${crash['timestamp'] ?? '-'}',
+                ),
+
+                const SizedBox(
+                  height: 10,
+                ),
+              ],
+            ),
+          ),
+        );
+      },
+    );
+  }
+}
