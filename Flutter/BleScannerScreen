@@ -1,0 +1,888 @@
+import 'dart:async';
+
+import 'package:flutter/material.dart';
+import 'package:flutter_foreground_task/flutter_foreground_task.dart';
+
+
+// ============================================================
+// BLE SCANNER SCREEN
+// ============================================================
+
+class BleScannerScreen
+    extends StatefulWidget {
+
+  const BleScannerScreen({
+    super.key,
+  });
+
+
+  @override
+  State<BleScannerScreen> createState() =>
+      _BleScannerScreenState();
+}
+
+
+// ============================================================
+// STATE
+// ============================================================
+
+class _BleScannerScreenState
+    extends State<BleScannerScreen> {
+
+  String _state =
+      'idle';
+
+  String _deviceName =
+      '';
+
+  String _deviceId =
+      '';
+
+  bool _serviceFound =
+  false;
+
+  bool _characteristicFound =
+  false;
+
+  bool _notificationsEnabled =
+  false;
+
+  int? _rssi;
+
+  String _lastPacket =
+      '';
+
+  String _message =
+      'Waiting for BLE service...';
+
+
+  // ==========================================================
+  // INIT
+  // ==========================================================
+
+  @override
+  void initState() {
+
+    super.initState();
+
+
+    // ----------------------------------------------------------
+    // Receive status from foreground BLE isolate
+    // ----------------------------------------------------------
+
+    FlutterForegroundTask
+        .addTaskDataCallback(
+      _onBleData,
+    );
+  }
+
+
+  // ==========================================================
+  // RECEIVE BLE DATA
+  // ==========================================================
+
+  void _onBleData(
+      Object data,
+      ) {
+
+    if (data
+    is! Map<String, dynamic>) {
+      return;
+    }
+
+
+    if (data['type'] !=
+        'ble_status') {
+      return;
+    }
+
+
+    if (!mounted) {
+      return;
+    }
+
+
+    setState(() {
+
+      _state =
+          data['state']
+              ?.toString() ??
+              'idle';
+
+      _deviceName =
+          data['deviceName']
+              ?.toString() ??
+              '';
+
+      _deviceId =
+          data['deviceId']
+              ?.toString() ??
+              '';
+
+      _serviceFound =
+          data['serviceFound'] ==
+              true;
+
+      _characteristicFound =
+          data[
+          'characteristicFound'] ==
+              true;
+
+      _notificationsEnabled =
+          data[
+          'notificationsEnabled'] ==
+              true;
+
+      _message =
+          data['message']
+              ?.toString() ??
+              '';
+
+      final rssi =
+      data['rssi'];
+
+      if (rssi is int) {
+        _rssi = rssi;
+      }
+
+      final packet =
+      data['lastPacket'];
+
+      if (packet != null &&
+          packet
+              .toString()
+              .isNotEmpty) {
+
+        _lastPacket =
+            packet.toString();
+      }
+    });
+  }
+
+
+  // ==========================================================
+  // DISPOSE
+  // ==========================================================
+
+  @override
+  void dispose() {
+
+    FlutterForegroundTask
+        .removeTaskDataCallback(
+      _onBleData,
+    );
+
+    super.dispose();
+  }
+
+
+  // ==========================================================
+  // STATE TEXT
+  // ==========================================================
+
+  String get _stateText {
+
+    switch (_state) {
+
+      case 'scanning':
+        return 'SCANNING';
+
+      case 'connecting':
+        return 'CONNECTING';
+
+      case 'connected':
+        return 'CONNECTED';
+
+      case 'receiving':
+        return 'RECEIVING PACKET';
+
+      case 'disconnected':
+        return 'DISCONNECTED';
+
+      case 'bluetoothOff':
+        return 'BLUETOOTH OFF';
+
+      case 'error':
+        return 'ERROR';
+
+      default:
+        return 'IDLE';
+    }
+  }
+
+
+  // ==========================================================
+  // STATE COLOR
+  // ==========================================================
+
+  Color get _stateColor {
+
+    switch (_state) {
+
+      case 'connected':
+      case 'receiving':
+        return Colors.green;
+
+      case 'scanning':
+      case 'connecting':
+        return Colors.orange;
+
+      case 'disconnected':
+      case 'bluetoothOff':
+      case 'error':
+        return Colors.red;
+
+      default:
+        return Colors.grey;
+    }
+  }
+
+
+  // ==========================================================
+  // BUILD
+  // ==========================================================
+
+  @override
+  Widget build(
+      BuildContext context,
+      ) {
+
+    return Scaffold(
+
+      appBar: AppBar(
+        title:
+        const Text(
+          'BLE Hardware Status',
+        ),
+
+        centerTitle: true,
+
+        backgroundColor:
+        const Color(
+          0xFFD32F2F,
+        ),
+
+        foregroundColor:
+        Colors.white,
+      ),
+
+
+      body: RefreshIndicator(
+
+        onRefresh: () async {
+
+          // The foreground service owns BLE.
+          // Pull-to-refresh only refreshes the UI.
+          setState(() {});
+
+          await Future.delayed(
+            const Duration(
+              milliseconds: 300,
+            ),
+          );
+        },
+
+
+        child: ListView(
+          padding:
+          const EdgeInsets.all(
+            20,
+          ),
+
+          children: [
+
+            // ==================================================
+            // MAIN CONNECTION CARD
+            // ==================================================
+
+            _buildConnectionCard(),
+
+
+            const SizedBox(
+              height: 16,
+            ),
+
+
+            // ==================================================
+            // DEVICE INFORMATION
+            // ==================================================
+
+            _buildDeviceCard(),
+
+
+            const SizedBox(
+              height: 16,
+            ),
+
+
+            // ==================================================
+            // BLE COMPONENTS
+            // ==================================================
+
+            _buildComponentCard(),
+
+
+            const SizedBox(
+              height: 16,
+            ),
+
+
+            // ==================================================
+            // LAST PACKET
+            // ==================================================
+
+            _buildPacketCard(),
+
+
+            const SizedBox(
+              height: 16,
+            ),
+
+
+            // ==================================================
+            // INFORMATION
+            // ==================================================
+
+            _buildInfoCard(),
+          ],
+        ),
+      ),
+    );
+  }
+
+
+  // ==========================================================
+  // CONNECTION CARD
+  // ==========================================================
+
+  Widget _buildConnectionCard() {
+
+    return Container(
+
+      padding:
+      const EdgeInsets.all(
+        24,
+      ),
+
+
+      decoration:
+      BoxDecoration(
+
+        color:
+        _stateColor
+            .withValues(
+          alpha: 0.10,
+        ),
+
+        borderRadius:
+        BorderRadius.circular(
+          22,
+        ),
+
+        border:
+        Border.all(
+          color:
+          _stateColor,
+          width: 1.5,
+        ),
+      ),
+
+
+      child: Column(
+
+        children: [
+
+          Icon(
+            _state == 'connected'
+                ? Icons.bluetooth_connected
+                : Icons.bluetooth,
+            size: 60,
+            color: _stateColor,
+          ),
+
+
+          const SizedBox(
+            height: 12,
+          ),
+
+
+          Text(
+            _stateText,
+            style:
+            TextStyle(
+              fontSize: 25,
+              fontWeight:
+              FontWeight.bold,
+              color:
+              _stateColor,
+            ),
+          ),
+
+
+          const SizedBox(
+            height: 8,
+          ),
+
+
+          Text(
+            _message.isEmpty
+                ? 'Waiting...'
+                : _message,
+            textAlign:
+            TextAlign.center,
+            style:
+            const TextStyle(
+              fontSize: 14,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+
+  // ==========================================================
+  // DEVICE CARD
+  // ==========================================================
+
+  Widget _buildDeviceCard() {
+
+    return _card(
+
+      title:
+      'Node A',
+
+      icon:
+      Icons.memory,
+
+      children: [
+
+        _statusRow(
+          'Device',
+          _deviceName.isEmpty
+              ? 'Not found'
+              : _deviceName,
+          _deviceName ==
+              'ROADGUARD',
+        ),
+
+
+        _statusRow(
+          'Device ID',
+          _deviceId.isEmpty
+              ? '—'
+              : _deviceId,
+          _deviceId.isNotEmpty,
+        ),
+
+
+        _statusRow(
+          'Signal',
+          _rssi == null
+              ? '—'
+              : '${_rssi} dBm',
+          _rssi != null,
+        ),
+      ],
+    );
+  }
+
+
+  // ==========================================================
+  // COMPONENT CARD
+  // ==========================================================
+
+  Widget _buildComponentCard() {
+
+    return _card(
+
+      title:
+      'BLE Components',
+
+      icon:
+      Icons.settings_bluetooth,
+
+      children: [
+
+        _statusRow(
+          'RoadGuard Service',
+          _serviceFound
+              ? 'FOUND'
+              : 'NOT FOUND',
+          _serviceFound,
+        ),
+
+
+        _statusRow(
+          'Crash Characteristic',
+          _characteristicFound
+              ? 'FOUND'
+              : 'NOT FOUND',
+          _characteristicFound,
+        ),
+
+
+        _statusRow(
+          'Notifications',
+          _notificationsEnabled
+              ? 'ENABLED'
+              : 'DISABLED',
+          _notificationsEnabled,
+        ),
+      ],
+    );
+  }
+
+
+  // ==========================================================
+  // PACKET CARD
+  // ==========================================================
+
+  Widget _buildPacketCard() {
+
+    return _card(
+
+      title:
+      'Last BLE Packet',
+
+      icon:
+      Icons.data_object,
+
+      children: [
+
+        Container(
+
+          width:
+          double.infinity,
+
+          padding:
+          const EdgeInsets.all(
+            14,
+          ),
+
+          decoration:
+          BoxDecoration(
+
+            color:
+            Colors.black
+                .withValues(
+              alpha: 0.05,
+            ),
+
+            borderRadius:
+            BorderRadius.circular(
+              12,
+            ),
+          ),
+
+
+          child: SelectableText(
+            _lastPacket.isEmpty
+                ? 'No packet received yet.'
+                : _lastPacket,
+
+            style:
+            const TextStyle(
+              fontFamily:
+              'monospace',
+              fontSize: 12,
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+
+
+  // ==========================================================
+  // INFO CARD
+  // ==========================================================
+
+  Widget _buildInfoCard() {
+
+    return _card(
+
+      title:
+      'Connection Flow',
+
+      icon:
+      Icons.route,
+
+      children: [
+
+        _flowStep(
+          '1',
+          'Scan',
+          _state == 'scanning',
+        ),
+
+        _flowStep(
+          '2',
+          'Connect to ROADGUARD',
+          _state == 'connecting',
+        ),
+
+        _flowStep(
+          '3',
+          'Discover Service',
+          _serviceFound,
+        ),
+
+        _flowStep(
+          '4',
+          'Enable Notifications',
+          _notificationsEnabled,
+        ),
+
+        _flowStep(
+          '5',
+          'Receive Crash Packet',
+          _lastPacket.isNotEmpty,
+        ),
+      ],
+    );
+  }
+
+
+  // ==========================================================
+  // GENERIC CARD
+  // ==========================================================
+
+  Widget _card({
+    required String title,
+    required IconData icon,
+    required List<Widget> children,
+  }) {
+
+    return Container(
+
+      padding:
+      const EdgeInsets.all(
+        18,
+      ),
+
+      decoration:
+      BoxDecoration(
+
+        color:
+        Theme.of(context)
+            .cardColor,
+
+        borderRadius:
+        BorderRadius.circular(
+          18,
+        ),
+
+        boxShadow: [
+
+          BoxShadow(
+            blurRadius: 8,
+            color:
+            Colors.black
+                .withValues(
+              alpha: 0.06,
+            ),
+          ),
+        ],
+      ),
+
+
+      child: Column(
+
+        crossAxisAlignment:
+        CrossAxisAlignment.start,
+
+        children: [
+
+          Row(
+
+            children: [
+
+              Icon(
+                icon,
+                color:
+                const Color(
+                  0xFFD32F2F,
+                ),
+              ),
+
+              const SizedBox(
+                width: 10,
+              ),
+
+              Text(
+                title,
+                style:
+                const TextStyle(
+                  fontSize: 17,
+                  fontWeight:
+                  FontWeight.bold,
+                ),
+              ),
+            ],
+          ),
+
+
+          const SizedBox(
+            height: 14,
+          ),
+
+
+          ...children,
+        ],
+      ),
+    );
+  }
+
+
+  // ==========================================================
+  // STATUS ROW
+  // ==========================================================
+
+  Widget _statusRow(
+      String title,
+      String value,
+      bool good,
+      ) {
+
+    return Padding(
+
+      padding:
+      const EdgeInsets.only(
+        bottom: 12,
+      ),
+
+      child: Row(
+
+        children: [
+
+          Icon(
+            good
+                ? Icons.check_circle
+                : Icons.cancel,
+            size: 20,
+            color:
+            good
+                ? Colors.green
+                : Colors.grey,
+          ),
+
+
+          const SizedBox(
+            width: 10,
+          ),
+
+
+          Expanded(
+            child:
+            Text(
+              title,
+              style:
+              const TextStyle(
+                fontSize: 14,
+              ),
+            ),
+          ),
+
+
+          Flexible(
+            child:
+            Text(
+              value,
+              textAlign:
+              TextAlign.right,
+              style:
+              TextStyle(
+                fontWeight:
+                FontWeight.bold,
+                fontSize: 13,
+                color:
+                good
+                    ? Colors.green
+                    : Colors.grey,
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+
+  // ==========================================================
+  // FLOW STEP
+  // ==========================================================
+
+  Widget _flowStep(
+      String number,
+      String text,
+      bool active,
+      ) {
+
+    return Padding(
+
+      padding:
+      const EdgeInsets.only(
+        bottom: 10,
+      ),
+
+      child: Row(
+
+        children: [
+
+          CircleAvatar(
+            radius: 15,
+            backgroundColor:
+            active
+                ? Colors.green
+                : Colors.grey.shade300,
+
+            child:
+            Text(
+              number,
+              style:
+              TextStyle(
+                color:
+                active
+                    ? Colors.white
+                    : Colors.black54,
+                fontWeight:
+                FontWeight.bold,
+              ),
+            ),
+          ),
+
+
+          const SizedBox(
+            width: 12,
+          ),
+
+
+          Expanded(
+            child:
+            Text(
+              text,
+              style:
+              TextStyle(
+                fontSize: 14,
+                fontWeight:
+                active
+                    ? FontWeight.bold
+                    : FontWeight.normal,
+              ),
+            ),
+          ),
+
+
+          if (active)
+            const Icon(
+              Icons.check,
+              color:
+              Colors.green,
+              size: 20,
+            ),
+        ],
+      ),
+    );
+  }
+}
