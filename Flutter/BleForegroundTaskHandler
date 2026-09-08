@@ -1,0 +1,595 @@
+import 'package:flutter_foreground_task/flutter_foreground_task.dart';
+import 'package:flutter_local_notifications/flutter_local_notifications.dart';
+
+import 'ble_service.dart';
+
+// ============================================================
+// ROADGUARD FOREGROUND BLE SERVICE
+// ============================================================
+//
+// Responsibilities:
+//
+//   • Keep BLE monitoring running
+//   • Run BleService + offline AI
+//   • Show crash notification from foreground isolate
+//   • Send crash packet to MAIN isolate
+//
+// MAIN isolate handles:
+//
+//   • Emergency screen
+//   • Supabase
+//   • Hospital SMS
+//
+// IMPORTANT:
+//
+//   BLE notification does NOT depend on the MAIN isolate.
+//
+// ============================================================
+
+@pragma('vm:entry-point')
+void startCallback() {
+  print('======================================');
+  print('🚀 startCallback() CALLED');
+  print('======================================');
+
+  FlutterForegroundTask.setTaskHandler(
+    BleForegroundTaskHandler(),
+  );
+
+  print('✅ BleForegroundTaskHandler REGISTERED');
+}
+
+// ============================================================
+// FOREGROUND TASK HANDLER
+// ============================================================
+
+class BleForegroundTaskHandler extends TaskHandler {
+  final BleService _bleService = BleService();
+
+  // ----------------------------------------------------------
+  // BACKGROUND NOTIFICATION PLUGIN
+  // ----------------------------------------------------------
+
+  static final FlutterLocalNotificationsPlugin
+  _notificationPlugin =
+  FlutterLocalNotificationsPlugin();
+
+  static bool _notificationInitialized = false;
+
+  // Prevent duplicate notifications for the same crash.
+  static String? _lastCrashId;
+
+  // ============================================================
+  // ON START
+  // ============================================================
+
+  @override
+  Future<void> onStart(
+      DateTime timestamp,
+      TaskStarter starter,
+      ) async {
+    print('======================================');
+    print('🚀 FOREGROUND BLE TASK STARTED');
+    print('======================================');
+
+    print('Time: $timestamp');
+    print('Task starter: ${starter.name}');
+
+    // ----------------------------------------------------------
+    // INITIALIZE BACKGROUND NOTIFICATIONS
+    // ----------------------------------------------------------
+
+    await _initializeBackgroundNotifications();
+
+    // ----------------------------------------------------------
+    // START BLE
+    // ----------------------------------------------------------
+
+    print('======================================');
+    print('📡 STARTING ROADGUARD BLE MONITOR');
+    print('======================================');
+
+    try {
+      await _bleService.startListening();
+
+      print('======================================');
+      print('✅ ROADGUARD BLE MONITOR RUNNING');
+      print('======================================');
+    } catch (e, stackTrace) {
+      print('======================================');
+      print('❌ FOREGROUND BLE TASK FAILED');
+      print('======================================');
+
+      print('Error: $e');
+      print('Stack: $stackTrace');
+    }
+  }
+
+  // ============================================================
+  // INITIALIZE BACKGROUND NOTIFICATIONS
+  // ============================================================
+
+  static Future<void> _initializeBackgroundNotifications() async {
+    if (_notificationInitialized) {
+      return;
+    }
+
+    try {
+      print('======================================');
+      print('🔔 INITIALIZING BACKGROUND NOTIFICATIONS');
+      print('======================================');
+
+      const androidSettings =
+      AndroidInitializationSettings(
+        '@mipmap/ic_launcher',
+      );
+
+      const initializationSettings =
+      InitializationSettings(
+        android: androidSettings,
+      );
+
+      await _notificationPlugin.initialize(
+        settings: initializationSettings,
+      );
+
+      // --------------------------------------------------------
+      // CRASH CHANNEL
+      // --------------------------------------------------------
+
+      const crashChannel =
+      AndroidNotificationChannel(
+        'crash_alerts_v2',
+        'Crash Alerts',
+        description:
+        'Urgent RoadGuard crash detection alerts',
+        importance: Importance.max,
+        playSound: true,
+        enableVibration: true,
+      );
+
+      final androidPlugin =
+      _notificationPlugin
+          .resolvePlatformSpecificImplementation<
+          AndroidFlutterLocalNotificationsPlugin>();
+
+      await androidPlugin?.createNotificationChannel(
+        crashChannel,
+      );
+
+      _notificationInitialized = true;
+
+      print(
+        '✅ BACKGROUND NOTIFICATION SERVICE READY',
+      );
+    } catch (e, stackTrace) {
+      print(
+        '❌ BACKGROUND NOTIFICATION INITIALIZATION FAILED',
+      );
+
+      print('Error: $e');
+      print('Stack: $stackTrace');
+    }
+  }
+
+  // ============================================================
+  // SHOW BACKGROUND CRASH ALERT
+  // ============================================================
+  //
+  // This function is called directly by BleService after a
+  // confirmed crash.
+  //
+  // Therefore:
+  //
+  //   ESP32
+  //      ↓
+  //   BLE
+  //      ↓
+  //   BleService
+  //      ↓
+  //   CRASH CONFIRMED
+  //      ↓
+  //   THIS FUNCTION
+  //      ↓
+  //   Android crash notification
+  //
+  // The MAIN isolate is NOT required for this notification.
+  //
+  // ============================================================
+
+  static Future<void> showBackgroundCrashAlert(
+      String packet,
+      ) async {
+    try {
+      await _initializeBackgroundNotifications();
+
+      // --------------------------------------------------------
+      // PARSE PACKET
+      // --------------------------------------------------------
+
+      final parts = packet.trim().split('|');
+
+      if (parts.length != 14) {
+        print(
+          '❌ INVALID CRASH PACKET: '
+              '${parts.length} FIELDS',
+        );
+        return;
+      }
+
+      if (parts[0] != 'CR') {
+        print(
+          '❌ INVALID CRASH PACKET HEADER: '
+              '${parts[0]}',
+        );
+        return;
+      }
+
+      final crashId = parts[1];
+      final severity = parts[4];
+      final vehicle = parts[5];
+
+      // --------------------------------------------------------
+      // DUPLICATE PROTECTION
+      // --------------------------------------------------------
+
+      if (_lastCrashId == crashId) {
+        print(
+          '⚠️ DUPLICATE CRASH ALERT IGNORED: '
+              '$crashId',
+        );
+        return;
+      }
+
+      _lastCrashId = crashId;
+
+      print('======================================');
+      print('🚨 BACKGROUND CRASH ALERT');
+      print('======================================');
+
+      print('Crash ID: $crashId');
+      print('Severity: $severity');
+      print('Vehicle: $vehicle');
+
+      // --------------------------------------------------------
+      // ANDROID NOTIFICATION
+      // --------------------------------------------------------
+
+      final androidDetails =
+      AndroidNotificationDetails(
+        'crash_alerts_v2',
+        'Crash Alerts',
+
+        channelDescription:
+        'Urgent RoadGuard crash detection alerts',
+
+        importance: Importance.max,
+        priority: Priority.max,
+
+        playSound: true,
+        enableVibration: true,
+
+        // Full-screen emergency intent.
+        fullScreenIntent: true,
+
+        category:
+        AndroidNotificationCategory.alarm,
+
+        ongoing: true,
+        autoCancel: false,
+
+        styleInformation:
+        BigTextStyleInformation(
+          'Crash ID: $crashId\n'
+              'Severity: $severity\n'
+              'Vehicle: $vehicle\n\n'
+              'Emergency crash detected. '
+              'Open RoadGuard for emergency details '
+              'and first aid guidance.',
+        ),
+      );
+
+      final notificationId =
+      crashId.hashCode & 0x7fffffff;
+
+      // --------------------------------------------------------
+      // SHOW NOTIFICATION
+      // --------------------------------------------------------
+
+      await _notificationPlugin.show(
+        id: notificationId,
+
+        title:
+        '🚨 CRASH DETECTED',
+
+        body:
+        'Severity $severity • '
+            '$vehicle • '
+            'Emergency assistance required',
+
+        notificationDetails:
+        NotificationDetails(
+          android: androidDetails,
+        ),
+
+        // VERY IMPORTANT:
+        // Store the complete crash packet.
+        //
+        // This allows the Flutter app to reconstruct the
+        // CrashData when the full-screen activity starts.
+        //
+        payload: packet,
+      );
+
+      print('======================================');
+      print(
+        '✅ BACKGROUND CRASH NOTIFICATION SHOWN',
+      );
+      print('======================================');
+
+      // --------------------------------------------------------
+      // UPDATE FOREGROUND SERVICE NOTIFICATION
+      // --------------------------------------------------------
+
+      try {
+        await FlutterForegroundTask.updateService(
+          notificationTitle:
+          '🚨 CRASH DETECTED',
+
+          notificationText:
+          'Crash $crashId detected — '
+              'Severity $severity',
+        );
+
+        print(
+          '✅ FOREGROUND SERVICE NOTIFICATION UPDATED',
+        );
+      } catch (e) {
+        print(
+          '⚠️ FOREGROUND SERVICE NOTIFICATION '
+              'UPDATE FAILED: $e',
+        );
+      }
+    } catch (e, stackTrace) {
+      print('======================================');
+      print(
+        '❌ BACKGROUND CRASH NOTIFICATION FAILED',
+      );
+      print('======================================');
+
+      print('Error: $e');
+      print('Stack: $stackTrace');
+    }
+  }
+
+  // ============================================================
+  // REPEAT EVENT
+  // ============================================================
+
+  @override
+  void onRepeatEvent(
+      DateTime timestamp,
+      ) {
+    // Do not put BLE scanning here.
+    //
+    // BleService has its own continuous BLE monitoring.
+  }
+
+  // ============================================================
+  // RECEIVE DATA
+  // ============================================================
+
+  @override
+  void onReceiveData(
+      Object data,
+      ) {
+    print(
+      '📩 DATA RECEIVED BY BLE TASK: $data',
+    );
+  }
+
+  // ============================================================
+  // SERVICE DESTROYED
+  // ============================================================
+
+  @override
+  Future<void> onDestroy(
+      DateTime timestamp,
+      bool isTimeout,
+      ) async {
+    print('======================================');
+    print('🛑 FOREGROUND BLE TASK DESTROYED');
+    print('======================================');
+
+    print('Time: $timestamp');
+    print('Timeout: $isTimeout');
+
+    try {
+      await _bleService.stopListening();
+
+      print(
+        '✅ BLE SERVICE STOPPED CLEANLY',
+      );
+    } catch (e) {
+      print(
+        '⚠️ BLE STOP ERROR: $e',
+      );
+    }
+  }
+
+  // ============================================================
+  // FOREGROUND SERVICE NOTIFICATION PRESSED
+  // ============================================================
+
+  @override
+  void onNotificationPressed() {
+    print(
+      '🔔 FOREGROUND SERVICE NOTIFICATION PRESSED',
+    );
+  }
+
+  // ============================================================
+  // NOTIFICATION BUTTON
+  // ============================================================
+
+  @override
+  void onNotificationButtonPressed(
+      String id,
+      ) {
+    print(
+      '🔘 FOREGROUND NOTIFICATION BUTTON: $id',
+    );
+  }
+
+  // ============================================================
+  // NOTIFICATION DISMISSED
+  // ============================================================
+
+  @override
+  void onNotificationDismissed() {
+    print(
+      '🔕 FOREGROUND SERVICE NOTIFICATION DISMISSED',
+    );
+  }
+}
+
+// ============================================================
+// START ROADGUARD FOREGROUND SERVICE
+// ============================================================
+//
+// This function can be called from main.dart.
+//
+// It starts the Android foreground service.
+//
+// ============================================================
+
+Future<void> startBleForegroundService() async {
+  print('======================================');
+  print('🚀 STARTING ROADGUARD FOREGROUND SERVICE');
+  print('======================================');
+
+  // ==========================================================
+  // INITIALIZE FOREGROUND TASK
+  // ==========================================================
+
+  FlutterForegroundTask.init(
+    androidNotificationOptions:
+    AndroidNotificationOptions(
+      channelId:
+      'ble_crash_listener',
+
+      channelName:
+      'Crash Alert Monitoring',
+
+      channelDescription:
+      'Keeps RoadGuard listening for nearby crash signals',
+
+      channelImportance:
+      NotificationChannelImportance.LOW,
+
+      priority:
+      NotificationPriority.LOW,
+    ),
+
+    iosNotificationOptions:
+    const IOSNotificationOptions(),
+
+    foregroundTaskOptions:
+    ForegroundTaskOptions(
+
+      // --------------------------------------------------------
+      // FOREGROUND SERVICE REPEAT
+      // --------------------------------------------------------
+
+      eventAction:
+      ForegroundTaskEventAction.repeat(
+        60000,
+      ),
+
+      // --------------------------------------------------------
+      // AUTOMATIC START AFTER BOOT
+      // --------------------------------------------------------
+
+      autoRunOnBoot: true,
+
+      // --------------------------------------------------------
+      // AUTOMATIC RESTART
+      // --------------------------------------------------------
+
+      allowAutoRestart: true,
+
+      // --------------------------------------------------------
+      // KEEP CPU AWAKE
+      // --------------------------------------------------------
+
+      allowWakeLock: true,
+
+      // --------------------------------------------------------
+      // WIFI LOCK
+      // --------------------------------------------------------
+
+      allowWifiLock: false,
+
+      // --------------------------------------------------------
+      // IMPORTANT
+      //
+      // Removing RoadGuard from the recent-apps/task screen
+      // should not automatically stop the foreground service.
+      //
+      // --------------------------------------------------------
+
+      stopWithTask: false,
+    ),
+  );
+
+  // ==========================================================
+  // CHECK EXISTING SERVICE
+  // ==========================================================
+
+  if (await FlutterForegroundTask.isRunningService) {
+    print('======================================');
+    print(
+      'ℹ️ FOREGROUND BLE SERVICE ALREADY RUNNING',
+    );
+    print('======================================');
+
+    return;
+  }
+
+  // ==========================================================
+  // START SERVICE
+  // ==========================================================
+
+  try {
+    final result =
+    await FlutterForegroundTask.startService(
+      notificationTitle:
+      'Crash Alert Active',
+
+      notificationText:
+      'Listening for crash signals nearby',
+
+      callback:
+      startCallback,
+    );
+
+    print('======================================');
+    print(
+      '✅ FOREGROUND BLE SERVICE STARTED',
+    );
+    print('======================================');
+
+    print(
+      'Service result: $result',
+    );
+  } catch (e, stackTrace) {
+    print('======================================');
+    print(
+      '❌ FOREGROUND SERVICE START FAILED',
+    );
+    print('======================================');
+
+    print('Error: $e');
+    print('Stack: $stackTrace');
+  }
+}
