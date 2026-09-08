@@ -1,0 +1,145 @@
+class CrashData {
+  final String crashId;
+
+  final double lat;
+  final double lng;
+
+  final int severity;
+  final String vehicleType;
+
+  // Sensor values from BLE packet
+  final double accX;
+  final double accY;
+  final double accZ;
+
+  final double gyroX;
+  final double gyroY;
+  final double gyroZ;
+
+  final double speedKmh;
+  final double motionIntensity;
+
+  // Location / emergency information
+  String? resolvedAddress;
+  String? nearestHospitalName;
+  String? nearestHospitalPhone;
+
+  CrashData({
+    required this.crashId,
+    required this.lat,
+    required this.lng,
+    required this.severity,
+    required this.vehicleType,
+    required this.accX,
+    required this.accY,
+    required this.accZ,
+    required this.gyroX,
+    required this.gyroY,
+    required this.gyroZ,
+    required this.speedKmh,
+    required this.motionIntensity,
+
+    this.resolvedAddress,
+    this.nearestHospitalName,
+    this.nearestHospitalPhone,
+  });
+
+  /// Expected BLE packet:
+  ///
+  /// CR|CrashID|LAT|LNG|SEVERITY|VEHICLE|
+  /// AccX|AccY|AccZ|GyroX|GyroY|GyroZ|Speed|MotionIntensity
+  ///
+  /// Total = 14 fields
+  static CrashData? tryParse(String packet) {
+    try {
+      if (!packet.startsWith('CR|')) {
+        return null;
+      }
+
+      final parts = packet.trim().split('|');
+
+      if (parts.length != 14) {
+        print(
+          '❌ Invalid crash packet: expected 14 fields, '
+              'received ${parts.length}',
+        );
+        return null;
+      }
+
+      return CrashData(
+        crashId: parts[1],
+        lat: double.parse(parts[2]),
+        lng: double.parse(parts[3]),
+        severity: int.parse(parts[4]),
+        vehicleType: parts[5],
+
+        accX: double.parse(parts[6]),
+        accY: double.parse(parts[7]),
+        accZ: double.parse(parts[8]),
+
+        gyroX: double.parse(parts[9]),
+        gyroY: double.parse(parts[10]),
+        gyroZ: double.parse(parts[11]),
+
+        speedKmh: double.parse(parts[12]),
+        motionIntensity: double.parse(parts[13]),
+      );
+    } catch (e) {
+      print('❌ Crash packet parsing failed: $e');
+      return null;
+    }
+  }
+
+  /// Convert crash information into a Supabase row.
+  Map<String, dynamic> toSupabaseRow() {
+    return {
+      'crash_id': crashId,
+
+      // Supabase stores latitude and longitude together
+      // in the existing "location" TEXT column.
+      'location': '$lat,$lng',
+
+      'timestamp': DateTime.now().toIso8601String(),
+
+      // Supabase column is TEXT
+      'severity': severity.toString(),
+
+      'vehicle_type': vehicleType,
+
+      'acc_x': accX,
+      'acc_y': accY,
+      'acc_z': accZ,
+
+      'gyro_x': gyroX,
+      'gyro_y': gyroY,
+      'gyro_z': gyroZ,
+
+      'speed_kmh': speedKmh,
+      'motion_intensity': motionIntensity,
+    };
+  }
+
+  @override
+  String toString() {
+    return '''
+CrashData(
+  crashId: $crashId,
+  lat: $lat,
+  lng: $lng,
+  severity: $severity,
+  vehicleType: $vehicleType,
+  accX: $accX,
+  accY: $accY,
+  accZ: $accZ,
+  gyroX: $gyroX,
+  gyroY: $gyroY,
+  gyroZ: $gyroZ,
+  speedKmh: $speedKmh,
+  motionIntensity: $motionIntensity,
+  resolvedAddress: $resolvedAddress,
+  nearestHospitalName: $nearestHospitalName,
+  nearestHospitalPhone: $nearestHospitalPhone,
+)
+''';
+  }
+}
