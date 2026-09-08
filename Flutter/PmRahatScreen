@@ -1,0 +1,163 @@
+import 'package:flutter/material.dart';
+
+class PmRahatScreen extends StatelessWidget {
+  const PmRahatScreen({super.key});
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      body: CustomScrollView(
+        slivers: [
+          SliverAppBar(
+            expandedHeight: 160,
+            pinned: true,
+            backgroundColor: const Color(0xFF26A69A),
+            iconTheme: const IconThemeData(color: Colors.white),
+            flexibleSpace: FlexibleSpaceBar(
+              titlePadding: const EdgeInsets.only(left: 56, bottom: 16),
+              title: const Text('PM RAHAT Scheme', style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 16)),
+              background: Container(
+                decoration: const BoxDecoration(
+                  gradient: LinearGradient(
+                    begin: Alignment.topLeft,
+                    end: Alignment.bottomRight,
+                    colors: [Color(0xFF26A69A), Color(0xFF4DB6AC)],
+                  ),
+                ),
+                child: const Center(
+                  child: Icon(Icons.local_hospital, color: Colors.white24, size: 90),
+                ),
+              ),
+            ),
+          ),
+          SliverToBoxAdapter(
+            child: Padding(
+              padding: const EdgeInsets.all(20),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Container(
+                    padding: const EdgeInsets.all(16),
+                    decoration: BoxDecoration(color: const Color(0xFFE0F2F1), borderRadius: BorderRadius.circular(16)),
+                    child: const Text(
+                      'PM-RAHAT (Road Accident Victims\' Hospitalisation and Assured Treatment) '
+                          'is a central government scheme launched on 13 February 2026 by the '
+                          'Ministry of Road Transport and Highways. It guarantees free, cashless '
+                          'emergency treatment to road accident victims — no upfront payment, no paperwork.',
+                      style: TextStyle(fontSize: 14, height: 1.5),
+                    ),
+                  ),
+                  const SizedBox(height: 24),
+                  const _SectionHeader(icon: Icons.how_to_reg, color: Color(0xFF26A69A), title: 'Who is eligible'),
+                  const SizedBox(height: 10),
+                  const _BulletCard(color: Color(0xFF26A69A), text: 'Any victim of a road accident involving a motor vehicle, on any category of road.'),
+                  const _BulletCard(color: Color(0xFF26A69A), text: 'Coverage applies regardless of income, insurance status, or hit-and-run status.'),
+                  const SizedBox(height: 20),
+                  const _SectionHeader(icon: Icons.medical_services, color: Color(0xFFFFA726), title: 'What is covered'),
+                  const SizedBox(height: 10),
+                  Wrap(
+                    spacing: 10,
+                    runSpacing: 10,
+                    children: const [
+                      _StatChip(icon: Icons.currency_rupee, label: '₹1.5 lakh per victim'),
+                      _StatChip(icon: Icons.event, label: 'Up to 7 days coverage'),
+                      _StatChip(icon: Icons.timer, label: '24-48hr stabilisation'),
+                      _StatChip(icon: Icons.payments, label: 'Direct hospital billing'),
+                    ],
+                  ),
+                  const SizedBox(height: 20),
+                  const _SectionHeader(icon: Icons.route, color: Color(0xFFEF5350), title: 'How it works at the scene'),
+                  const SizedBox(height: 10),
+                  const _BulletCard(color: Color(0xFFEF5350), text: 'Call 112 — connects you to the nearest designated hospital and dispatches an ambulance.'),
+                  const _BulletCard(color: Color(0xFFEF5350), text: 'Police confirm the accident digitally (eDAR system) — but treatment starts immediately, unaffected by this step.'),
+                  const _BulletCard(color: Color(0xFFEF5350), text: 'The hospital treats the patient immediately; billing happens digitally in the background.'),
+                  const SizedBox(height: 24),
+                  Container(
+                    padding: const EdgeInsets.all(12),
+                    decoration: BoxDecoration(color: Colors.grey.shade100, borderRadius: BorderRadius.circular(12)),
+                    child: const Text(
+                      'Scheme details are current as of early-to-mid 2026 (PIB, MoRTH). As a newly launched scheme, implementation details may evolve — verify with 112 or official sources during an actual emergency.',
+                      style: TextStyle(fontSize: 11.5, color: Colors.black54),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _SectionHeader extends StatelessWidget {
+  final IconData icon;
+  final Color color;
+  final String title;
+  const _SectionHeader({required this.icon, required this.color, required this.title});
+
+  @override
+  Widget build(BuildContext context) {
+    return Row(
+      children: [
+        Icon(icon, color: color, size: 20),
+        const SizedBox(width: 8),
+        Text(title, style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: color)),
+      ],
+    );
+  }
+}
+
+class _BulletCard extends StatelessWidget {
+  final Color color;
+  final String text;
+  const _BulletCard({required this.color, required this.text});
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 8),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Container(
+            margin: const EdgeInsets.only(top: 5),
+            width: 8,
+            height: 8,
+            decoration: BoxDecoration(color: color, shape: BoxShape.circle),
+          ),
+          const SizedBox(width: 12),
+          Expanded(child: Text(text, style: const TextStyle(fontSize: 13.5, height: 1.4))),
+        ],
+      ),
+    );
+  }
+}
+
+class _StatChip extends StatelessWidget {
+  final IconData icon;
+  final String label;
+  const _StatChip({required this.icon, required this.label});
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+      decoration: BoxDecoration(
+        color: const Color(0xFFFFF3E0),
+        borderRadius: BorderRadius.circular(20),
+        border: Border.all(color: const Color(0xFFFFA726).withOpacity(0.4)),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          const Icon(Icons.circle, size: 4, color: Color(0xFFFFA726)),
+          const SizedBox(width: 6),
+          Icon(icon, size: 15, color: const Color(0xFFF57C00)),
+          const SizedBox(width: 6),
+          Text(label, style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: Color(0xFFE65100))),
+        ],
+      ),
+    );
+  }
+}
