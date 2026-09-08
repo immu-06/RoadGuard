@@ -1,0 +1,141 @@
+import 'package:flutter/material.dart';
+
+import '../services/ble_service.dart';
+
+class CrashTestButton extends StatefulWidget {
+  const CrashTestButton({
+    super.key,
+  });
+
+  @override
+  State<CrashTestButton> createState() =>
+      _CrashTestButtonState();
+}
+
+class _CrashTestButtonState
+    extends State<CrashTestButton> {
+
+  final BleService _bleService =
+  BleService();
+
+  bool _testing = false;
+
+  // ============================================================
+  // RUN CRASH TEST
+  // ============================================================
+
+  Future<void> _runCrashTest() async {
+    if (_testing) {
+      return;
+    }
+
+    setState(() {
+      _testing = true;
+    });
+
+    try {
+      print('======================================');
+      print('🧪 TEST CRASH BUTTON PRESSED');
+      print('======================================');
+
+      // --------------------------------------------------------
+      // This runs:
+      //
+      // TEST SENSOR DATA
+      //       ↓
+      //      TFLITE
+      //       ↓
+      //   CRASH / NO CRASH
+      //       ↓
+      //      GPS
+      //       ↓
+      // EMERGENCY FLOW
+      //       ↓
+      // SOUND + VIBRATION
+      //       ↓
+      // EMERGENCY SCREEN
+      //       ↓
+      // SUPABASE + SMS
+      // --------------------------------------------------------
+
+      await _bleService.simulateCrash();
+
+      if (!mounted) {
+        return;
+      }
+
+      ScaffoldMessenger.of(context)
+          .showSnackBar(
+        const SnackBar(
+          content: Text(
+            'AI crash test completed',
+          ),
+        ),
+      );
+    } catch (e) {
+      if (!mounted) {
+        return;
+      }
+
+      ScaffoldMessenger.of(context)
+          .showSnackBar(
+        SnackBar(
+          content: Text(
+            'Crash test failed: $e',
+          ),
+          backgroundColor:
+          Colors.red,
+        ),
+      );
+    } finally {
+      if (mounted) {
+        setState(() {
+          _testing = false;
+        });
+      }
+    }
+  }
+
+  // ============================================================
+  // UI
+  // ============================================================
+
+  @override
+  Widget build(BuildContext context,) {
+    return FloatingActionButton.extended(
+      heroTag:
+      'crash_test_button',
+
+      onPressed:
+      _testing
+          ? null
+          : _runCrashTest,
+
+      icon: Icon(
+        _testing
+            ? Icons.hourglass_top
+            : Icons.science,
+      ),
+
+      label: Text(
+        _testing
+            ? 'Testing...'
+            : 'Test Crash',
+      ),
+
+      backgroundColor:
+      Colors.red,
+
+      foregroundColor:
+      Colors.white,
+    );
+  }
+
+  // ============================================================
+  // DISPOSE
+  // ============================================================
+  @override
+  void dispose() {
+    super.dispose();
+  }
+}
