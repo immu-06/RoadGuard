@@ -1,0 +1,492 @@
+import 'dart:convert';
+
+import 'package:flutter/material.dart';
+import 'package:flutter_foreground_task/flutter_foreground_task.dart';
+import 'package:supabase_flutter/supabase_flutter.dart';
+
+import 'models/crash_model.dart';
+import 'screens/nav_shell.dart';
+import 'screens/emergency_overlay_screen.dart';
+
+import 'services/notification_service.dart';
+import 'services/foreground_ble_task.dart';
+
+// ============================================================
+// SUPABASE
+// ============================================================
+
+final supabase = Supabase.instance.client;
+
+// ============================================================
+// GLOBAL NAVIGATOR
+// ============================================================
+
+final GlobalKey<NavigatorState> navigatorKey =
+GlobalKey<NavigatorState>();
+
+// ============================================================
+// MAIN
+// ============================================================
+
+Future<void> main() async {
+  WidgetsFlutterBinding.ensureInitialized();
+
+  print('======================================');
+  print('🚀 ROADGUARD APPLICATION STARTING');
+  print('======================================');
+
+  // ----------------------------------------------------------
+  // INITIALIZE FOREGROUND TASK COMMUNICATION
+  //
+  // This MUST happen before the foreground service starts.
+  // ----------------------------------------------------------
+
+  FlutterForegroundTask.initCommunicationPort();
+
+  // ----------------------------------------------------------
+  // SUPABASE
+  // ----------------------------------------------------------
+
+  await Supabase.initialize(
+    url:
+    'https://awrneptvcxhdurvmpxcx.supabase.co',
+    anonKey:
+    'sb_publishable_Jx4xLZ8sCc0MmwTbu_SeqQ__-VJ8j7E',
+  );
+
+  print('✅ SUPABASE INITIALIZED');
+
+  // ----------------------------------------------------------
+  // NOTIFICATIONS
+  // ----------------------------------------------------------
+
+  await NotificationService.init();
+
+  print('✅ NOTIFICATION SERVICE INITIALIZED');
+
+  // ----------------------------------------------------------
+  // RECEIVE CRASH EVENTS FROM BLE FOREGROUND ISOLATE
+  // ----------------------------------------------------------
+
+  FlutterForegroundTask.addTaskDataCallback(
+    _onForegroundTaskData,
+  );
+
+  print(
+    '✅ FOREGROUND → MAIN COMMUNICATION READY',
+  );
+
+  // ----------------------------------------------------------
+  // START APPLICATION
+  // ----------------------------------------------------------
+
+  runApp(const RoadGuardApp());
+
+  WidgetsBinding.instance.addPostFrameCallback(
+        (_) async {
+      // --------------------------------------------------------
+      // CHECK WHETHER CRASH NOTIFICATION LAUNCHED THE APP
+      // --------------------------------------------------------
+
+      NotificationService.handleLaunchAfterAppStarted();
+
+      // --------------------------------------------------------
+      // START FOREGROUND BLE SERVICE
+      // --------------------------------------------------------
+
+      try {
+        await startBleForegroundService();
+
+        print('======================================');
+        print(
+          '✅ FOREGROUND BLE SERVICE STARTED',
+        );
+        print('======================================');
+      } catch (e, stackTrace) {
+        print('======================================');
+        print(
+          '❌ FOREGROUND SERVICE START FAILED',
+        );
+        print('Error: $e');
+        print('Stack: $stackTrace');
+        print('======================================');
+      }
+    },
+  );
+}
+
+// ============================================================
+// RECEIVE DATA FROM BLE FOREGROUND ISOLATE
+// ============================================================
+//
+// Expected:
+//
+// {
+//   "type": "CRASH",
+//   "packet": "CR|..."
+// }
+//
+// ============================================================
+
+void _onForegroundTaskData(Object data) {
+  print('======================================');
+  print('📩 DATA RECEIVED FROM BLE FOREGROUND');
+  print('======================================');
+
+  print('Data: $data');
+
+  try {
+    if (data is Map) {
+      final type = data['type']?.toString();
+
+      if (type == 'CRASH') {
+        final packet =
+        data['packet']?.toString();
+
+        if (packet == null ||
+            packet.isEmpty) {
+          print(
+            '❌ Crash packet missing',
+          );
+          return;
+        }
+
+        _handleCrashFromForeground(
+          packet,
+        );
+
+        return;
+      }
+    }
+
+    // --------------------------------------------------------
+    // Also support JSON string if required.
+    // --------------------------------------------------------
+
+    if (data is String) {
+      final decoded =
+      jsonDecode(data);
+
+      if (decoded is Map &&
+          decoded['type'] == 'CRASH') {
+        final packet =
+        decoded['packet']?.toString();
+
+        if (packet != null &&
+            packet.isNotEmpty) {
+          _handleCrashFromForeground(
+            packet,
+          );
+        }
+      }
+    }
+  } catch (e, stackTrace) {
+    print(
+      '❌ FOREGROUND DATA PROCESSING FAILED',
+    );
+    print('Error: $e');
+    print('Stack: $stackTrace');
+  }
+}
+
+// ============================================================
+// HANDLE CRASH FROM BLE FOREGROUND TASK
+// ============================================================
+
+Future<void> _handleCrashFromForeground(
+    String packet,
+    ) async {
+  print('======================================');
+  print(
+    '🚨 MAIN ISOLATE RECEIVED CRASH',
+  );
+  print('======================================');
+
+  print('Packet: $packet');
+
+  // ----------------------------------------------------------
+  // Parse the SAME 14-field hardware packet.
+  // ----------------------------------------------------------
+
+  final crash =
+  CrashData.tryParse(
+    packet.trim(),
+  );
+
+  if (crash == null) {
+    print(
+      '❌ MAIN ISOLATE COULD NOT PARSE CRASH',
+    );
+    return;
+  }
+
+  print('======================================');
+  print('🚨 CRASH DATA READY IN MAIN ISOLATE');
+  print('======================================');
+
+  print('Crash ID: ${crash.crashId}');
+  print('Latitude: ${crash.lat}');
+  print('Longitude: ${crash.lng}');
+  print('Severity: ${crash.severity}');
+  print('Vehicle: ${crash.vehicleType}');
+
+  print('======================================');
+
+  // ----------------------------------------------------------
+  // 1. LOCAL EMERGENCY ALERT
+  // ----------------------------------------------------------
+
+  try {
+    await NotificationService.showCrashAlert(
+      crash,
+    );
+
+    print(
+      '✅ LOCAL EMERGENCY ALERT COMPLETE',
+    );
+  } catch (e, stackTrace) {
+    print(
+      '❌ LOCAL EMERGENCY ALERT FAILED',
+    );
+    print('Error: $e');
+    print('Stack: $stackTrace');
+  }
+
+  // ----------------------------------------------------------
+  // 2. SUPABASE
+  // ----------------------------------------------------------
+
+  await _sendCrashToBackend(
+    crash,
+  );
+}
+
+// ============================================================
+// SEND CRASH TO SUPABASE
+// ============================================================
+
+Future<void> _sendCrashToBackend(
+    CrashData crash,
+    ) async {
+  print('======================================');
+  print('☁️ SENDING CRASH TO SUPABASE');
+  print('======================================');
+
+  try {
+    final row =
+    crash.toSupabaseRow();
+
+    print('Supabase row: $row');
+
+    // --------------------------------------------------------
+    // INSERT CRASH
+    // --------------------------------------------------------
+
+    final inserted =
+    await supabase
+        .from('crashes')
+        .insert(row)
+        .select()
+        .maybeSingle();
+
+    print('======================================');
+    print('✅ CRASH ADDED TO SUPABASE');
+    print('======================================');
+
+    print('Inserted row: $inserted');
+
+    // --------------------------------------------------------
+    // SEND HOSPITAL SMS
+    // --------------------------------------------------------
+
+    await _sendHospitalSms(
+      crash,
+    );
+  } catch (e, stackTrace) {
+    print('======================================');
+    print('❌ SUPABASE INSERT FAILED');
+    print('======================================');
+
+    print('Error: $e');
+    print('Stack: $stackTrace');
+
+    print('======================================');
+  }
+}
+
+// ============================================================
+// SEND HOSPITAL SMS
+// ============================================================
+
+Future<void> _sendHospitalSms(
+    CrashData crash,
+    ) async {
+  print('======================================');
+  print('🏥 SENDING HOSPITAL SMS');
+  print('======================================');
+
+  try {
+    final row =
+    crash.toSupabaseRow();
+
+    print(
+      'Calling Edge Function: send-crash-sms',
+    );
+
+    print(
+      'Body: $row',
+    );
+
+    final response =
+    await supabase.functions.invoke(
+      'send-crash-sms',
+      body: {
+        'record': row,
+      },
+    );
+
+    print('======================================');
+    print('✅ HOSPITAL SMS FUNCTION COMPLETED');
+    print('======================================');
+
+    print(
+      'Response: ${response.data}',
+    );
+  } catch (e, stackTrace) {
+    print('======================================');
+    print('❌ HOSPITAL SMS FAILED');
+    print('======================================');
+
+    print('Error: $e');
+    print('Stack: $stackTrace');
+
+    print('======================================');
+  }
+}
+
+// ============================================================
+// APP
+// ============================================================
+
+class RoadGuardApp extends StatelessWidget {
+  const RoadGuardApp({
+    super.key,
+  });
+
+  @override
+  Widget build(
+      BuildContext context,
+      ) {
+    return MaterialApp(
+      navigatorKey: navigatorKey,
+
+      title: 'RoadGuard',
+
+      debugShowCheckedModeBanner: false,
+
+      theme: ThemeData(
+        useMaterial3: true,
+
+        colorScheme:
+        ColorScheme.fromSeed(
+          seedColor:
+          const Color(0xFFD32F2F),
+          brightness:
+          Brightness.light,
+        ),
+
+        scaffoldBackgroundColor:
+        const Color(0xFFFAFAFA),
+
+        appBarTheme:
+        const AppBarTheme(
+          backgroundColor:
+          Colors.white,
+          foregroundColor:
+          Colors.black87,
+          elevation: 0,
+          centerTitle: false,
+          titleTextStyle:
+          TextStyle(
+            fontSize: 22,
+            fontWeight:
+            FontWeight.bold,
+            color:
+            Colors.black87,
+          ),
+        ),
+
+        cardTheme:
+        CardThemeData(
+          elevation: 0,
+          shape:
+          RoundedRectangleBorder(
+            borderRadius:
+            BorderRadius.circular(16),
+          ),
+          color:
+          Colors.white,
+          margin:
+          EdgeInsets.zero,
+        ),
+
+        elevatedButtonTheme:
+        ElevatedButtonThemeData(
+          style:
+          ElevatedButton.styleFrom(
+            shape:
+            RoundedRectangleBorder(
+              borderRadius:
+              BorderRadius.circular(14),
+            ),
+            padding:
+            const EdgeInsets.symmetric(
+              vertical: 14,
+              horizontal: 20,
+            ),
+          ),
+        ),
+
+        bottomNavigationBarTheme:
+        const BottomNavigationBarThemeData(
+          backgroundColor:
+          Colors.white,
+          selectedItemColor:
+          Color(0xFFD32F2F),
+          unselectedItemColor:
+          Colors.grey,
+          type:
+          BottomNavigationBarType.fixed,
+          elevation: 8,
+        ),
+      ),
+
+      home:
+      const NavShell(),
+
+      // --------------------------------------------------------
+      // ROUTES
+      // --------------------------------------------------------
+
+      onGenerateRoute:
+          (settings) {
+        if (settings.name ==
+            '/emergency') {
+          final crash =
+          settings.arguments
+          as CrashData?;
+
+          return MaterialPageRoute(
+            fullscreenDialog: true,
+            builder: (_) =>
+                EmergencyOverlayScreen(
+                  crash: crash,
+                ),
+          );
+        }
+
+        return null;
+      },
+    );
+  }
+}
