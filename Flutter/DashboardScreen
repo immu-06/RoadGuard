@@ -1,0 +1,148 @@
+import 'package:flutter/material.dart';
+import '../main.dart'; // for the global `supabase` client
+
+class DashboardScreen extends StatefulWidget {
+  const DashboardScreen({super.key});
+
+  @override
+  State<DashboardScreen> createState() => _DashboardScreenState();
+}
+
+class _DashboardScreenState extends State<DashboardScreen> {
+  final _stream = supabase
+      .from('crashes')
+      .stream(primaryKey: ['id'])
+      .order('created_at', ascending: false);
+
+  Color _severityColor(dynamic severity) {
+    final level = int.tryParse(severity.toString()) ?? 0;
+    if (level >= 4) return const Color(0xFFEF5350);
+    if (level == 3) return const Color(0xFFFFA726);
+    return const Color(0xFF66BB6A);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      body: CustomScrollView(
+        slivers: [
+          SliverAppBar(
+            expandedHeight: 140,
+            pinned: true,
+            backgroundColor: const Color(0xFF7E57C2),
+            flexibleSpace: FlexibleSpaceBar(
+              titlePadding: const EdgeInsets.only(left: 20, bottom: 16),
+              title: const Text('Live Crash Dashboard', style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 16)),
+              background: const DecoratedBox(
+                decoration: BoxDecoration(
+                  gradient: LinearGradient(
+                    begin: Alignment.topLeft,
+                    end: Alignment.bottomRight,
+                    colors: [Color(0xFF7E57C2), Color(0xFF9575CD)],
+                  ),
+                ),
+              ),
+            ),
+          ),
+          StreamBuilder<List<Map<String, dynamic>>>(
+            stream: _stream,
+            builder: (context, snapshot) {
+              if (snapshot.connectionState == ConnectionState.waiting) {
+                return const SliverFillRemaining(child: Center(child: CircularProgressIndicator()));
+              }
+              if (snapshot.hasError) {
+                return SliverFillRemaining(child: Center(child: Text('Error: ${snapshot.error}')));
+              }
+
+              final crashes = snapshot.data ?? [];
+
+              if (crashes.isEmpty) {
+                return const SliverFillRemaining(
+                  child: Center(
+                    child: Padding(
+                      padding: EdgeInsets.all(24),
+                      child: Column(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        children: [
+                          Icon(Icons.dashboard_customize_outlined, size: 56, color: Colors.grey),
+                          SizedBox(height: 12),
+                          Text(
+                            'No crashes recorded yet.\nThis list updates live as new crashes come in.',
+                            textAlign: TextAlign.center,
+                            style: TextStyle(color: Colors.grey),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+                );
+              }
+
+              return SliverPadding(
+                padding: const EdgeInsets.all(16),
+                sliver: SliverList(
+                  delegate: SliverChildBuilderDelegate(
+                        (context, index) {
+                      final crash = crashes[index];
+                      final color = _severityColor(crash['severity']);
+                      return Container(
+                        margin: const EdgeInsets.only(bottom: 12),
+                        decoration: BoxDecoration(
+                          color: Colors.white,
+                          borderRadius: BorderRadius.circular(16),
+                          border: Border(left: BorderSide(color: color, width: 5)),
+                          boxShadow: [BoxShadow(color: Colors.black.withOpacity(0.05), blurRadius: 8, offset: const Offset(0, 2))],
+                        ),
+                        child: ListTile(
+                          contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                          leading: CircleAvatar(
+                            backgroundColor: color,
+                            child: Text('${crash['severity'] ?? '?'}', style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
+                          ),
+                          title: Text('Crash ${crash['crash_id'] ?? ''}', style: const TextStyle(fontWeight: FontWeight.bold)),
+                          subtitle: Padding(
+                            padding: const EdgeInsets.only(top: 4),
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                _MetaRow(icon: Icons.two_wheeler, text: '${crash['vehicle_type'] ?? '-'}'),
+                                _MetaRow(icon: Icons.location_on_outlined, text: '${crash['location'] ?? '-'}'),
+                                _MetaRow(icon: Icons.schedule, text: '${crash['timestamp'] ?? '-'}'),
+                              ],
+                            ),
+                          ),
+                          isThreeLine: true,
+                        ),
+                      );
+                    },
+                    childCount: crashes.length,
+                  ),
+                ),
+              );
+            },
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _MetaRow extends StatelessWidget {
+  final IconData icon;
+  final String text;
+  const _MetaRow({required this.icon, required this.text});
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.only(top: 2),
+      child: Row(
+        children: [
+          Icon(icon, size: 14, color: Colors.grey),
+          const SizedBox(width: 6),
+          Text(text, style: const TextStyle(fontSize: 12.5, color: Colors.black54)),
+        ],
+      ),
+    );
+  }
+}
