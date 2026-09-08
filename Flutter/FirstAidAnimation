@@ -1,0 +1,37 @@
+import 'package:flutter/material.dart';
+
+class FirstAidAnimation extends StatelessWidget {
+  final String assetPath;
+
+  const FirstAidAnimation({
+    super.key,
+    required this.assetPath,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    // The generated Sentinel-Mesh animation assets are GIFs.
+    // Image.asset() plays animated GIF frames automatically.
+    return ClipRRect(
+      borderRadius: BorderRadius.circular(16),
+      child: Container(
+        constraints: const BoxConstraints(
+          minHeight: 140,
+          maxHeight: 280,
+        ),
+        width: double.infinity,
+        color: Colors.white,
+        child: Image.asset(
+          assetPath,
+          fit: BoxFit.contain,
+          errorBuilder: (_, __, ___) {
+            return const Padding(
+              padding: EdgeInsets.all(24),
+              child: Text('Animation unavailable'),
+            );
+          },
+        ),
+      ),
+    );
+  }
+}
