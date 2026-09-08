@@ -1,0 +1,1191 @@
+import 'package:flutter/material.dart';
+import 'package:flutter_foreground_task/flutter_foreground_task.dart';
+
+import '../services/ble_service.dart';
+import '../services/notification_service.dart';
+import '../services/foreground_ble_task.dart';
+import '../services/ml_service.dart';
+import 'ble_scanner_screen.dart';
+import 'first_aid_screen.dart';
+import '../widgets/crash_test_button.dart';
+
+class HomeScreen extends StatefulWidget {
+  const HomeScreen({super.key});
+
+  @override
+  State<HomeScreen> createState() => _HomeScreenState();
+}
+
+class _HomeScreenState extends State<HomeScreen> {
+
+  // ============================================================
+  // SERVICES
+  // ============================================================
+
+  final _bleService = BleService();
+  final _mlService = MlService();
+
+  bool _isStartingMonitoring = false;
+  bool _monitoringStarted = false;
+
+  // ============================================================
+  // INITIALIZE
+  // ============================================================
+
+  @override
+  void initState() {
+    super.initState();
+
+    _startMonitoring();
+
+    _initializeAI();
+  }
+
+  // ============================================================
+  // INITIALIZE OFFLINE AI
+  // ============================================================
+
+  Future<void> _initializeAI() async {
+    try {
+      await _mlService.initialize();
+
+      if (!mounted) return;
+
+      setState(() {});
+
+      debugPrint(
+        '======================================',
+      );
+
+      debugPrint(
+        '✅ OFFLINE AI MODEL READY',
+      );
+
+      debugPrint(
+        '======================================',
+      );
+    } catch (e, stackTrace) {
+
+      debugPrint(
+        '======================================',
+      );
+
+      debugPrint(
+        '❌ AI MODEL INITIALIZATION FAILED',
+      );
+
+      debugPrint(
+        'ERROR: $e',
+      );
+
+      debugPrint(
+        'STACK: $stackTrace',
+      );
+
+      debugPrint(
+        '======================================',
+      );
+    }
+  }
+  // ============================================================
+// START FOREGROUND BLE SERVICE
+// ============================================================
+
+  Future<void> startBleForegroundService() async {
+    debugPrint('🚀 Starting foreground service...');
+
+    await FlutterForegroundTask.startService(
+      notificationTitle: 'Crash Alert',
+      notificationText: 'Monitoring nearby RoadGuard devices',
+      callback: startCallback,
+    );
+
+    debugPrint('✅ startService() completed');
+  }
+
+  // ============================================================
+  // START CRASH MONITORING
+  // ============================================================
+
+  Future<void> _startMonitoring() async {
+
+    if (_isStartingMonitoring ||
+        _monitoringStarted) {
+      return;
+    }
+
+    if (!mounted) return;
+
+    setState(() {
+      _isStartingMonitoring = true;
+    });
+
+    try {
+
+      debugPrint(
+        '======================================',
+      );
+
+      debugPrint(
+        'STARTING CRASH MONITORING',
+      );
+
+      debugPrint(
+        '======================================',
+      );
+
+      // --------------------------------------------------------
+      // STEP 1
+      // Request Bluetooth permissions.
+      // --------------------------------------------------------
+
+      debugPrint(
+        'Requesting Bluetooth permissions...',
+      );
+
+      await _bleService.requestPermissions();
+
+      debugPrint(
+        'Bluetooth permission request completed.',
+      );
+
+      // --------------------------------------------------------
+      // STEP 2
+      // Start foreground BLE service.
+      // --------------------------------------------------------
+
+      debugPrint(
+        'Starting foreground BLE service...',
+      );
+
+      await startBleForegroundService();
+
+      debugPrint(
+        '======================================',
+      );
+
+      debugPrint(
+        '✅ FOREGROUND BLE SERVICE STARTED',
+      );
+
+      debugPrint(
+        '======================================',
+      );
+
+      if (mounted) {
+        setState(() {
+          _monitoringStarted = true;
+        });
+      }
+
+    } catch (e, stackTrace) {
+
+      debugPrint(
+        '======================================',
+      );
+
+      debugPrint(
+        '❌ BLE MONITORING START FAILED',
+      );
+
+      debugPrint(
+        'ERROR: $e',
+      );
+
+      debugPrint(
+        'STACK TRACE: $stackTrace',
+      );
+
+      debugPrint(
+        '======================================',
+      );
+
+      if (mounted) {
+        ScaffoldMessenger.of(context)
+            .showSnackBar(
+          SnackBar(
+            content: Text(
+              'Unable to start crash monitoring: $e',
+            ),
+            backgroundColor: Colors.red,
+          ),
+        );
+      }
+
+    } finally {
+
+      if (mounted) {
+        setState(() {
+          _isStartingMonitoring = false;
+        });
+      }
+    }
+  }
+
+  // ============================================================
+  // RESTART MONITORING
+  // ============================================================
+
+  Future<void> _restartMonitoring() async {
+
+    if (!mounted) return;
+
+    setState(() {
+      _monitoringStarted = false;
+    });
+
+    await _startMonitoring();
+  }
+
+  // ============================================================
+  // OPEN FIRST AID
+  // ============================================================
+
+  void _openFirstAid() {
+
+    Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (_) =>
+        const FirstAidScreen(),
+      ),
+    );
+  }
+
+  // ============================================================
+  // DISPOSE
+  // ============================================================
+
+  @override
+  void dispose() {
+
+    // IMPORTANT:
+    //
+    // Do NOT stop BLE here.
+    //
+    // The foreground service owns the actual
+    // BLE scanner.
+
+    _mlService.dispose();
+
+    super.dispose();
+  }
+
+  // ============================================================
+  // BUILD
+  // ============================================================
+
+  @override
+  Widget build(
+      BuildContext context,
+      ) {
+
+    return Scaffold(
+
+      // ==========================================================
+      // BODY
+      // ==========================================================
+
+      body: CustomScrollView(
+        slivers: [
+
+          // ======================================================
+          // HEADER
+          // ======================================================
+
+          SliverAppBar(
+
+            expandedHeight: 200,
+
+            pinned: true,
+
+            backgroundColor:
+            const Color(0xFFD32F2F),
+
+            flexibleSpace:
+            FlexibleSpaceBar(
+
+              titlePadding:
+              const EdgeInsets.only(
+                left: 20,
+                bottom: 16,
+              ),
+
+              title: const Text(
+                'Crash Alert',
+
+                style: TextStyle(
+                  color: Colors.white,
+                  fontWeight:
+                  FontWeight.bold,
+                ),
+              ),
+
+              background: Container(
+
+                decoration:
+                const BoxDecoration(
+                  gradient:
+                  LinearGradient(
+                    begin:
+                    Alignment.topLeft,
+                    end:
+                    Alignment.bottomRight,
+                    colors: [
+                      Color(0xFFD32F2F),
+                      Color(0xFFFF5252),
+                    ],
+                  ),
+                ),
+
+                child: Center(
+
+                  child: Container(
+
+                    padding:
+                    const EdgeInsets.all(
+                      24,
+                    ),
+
+                    decoration:
+                    BoxDecoration(
+                      color:
+                      Colors.white
+                          .withValues(
+                        alpha: 0.15,
+                      ),
+                      shape:
+                      BoxShape.circle,
+                    ),
+
+                    child: const Icon(
+                      Icons.shield_moon,
+
+                      color:
+                      Colors.white,
+
+                      size: 64,
+                    ),
+                  ),
+                ),
+              ),
+            ),
+          ),
+
+          // ======================================================
+          // MAIN CONTENT
+          // ======================================================
+
+          SliverToBoxAdapter(
+
+            child: Padding(
+
+              padding:
+              const EdgeInsets.all(20),
+
+              child: Column(
+
+                crossAxisAlignment:
+                CrossAxisAlignment.stretch,
+
+                children: [
+
+                  // ==================================================
+                  // BLE STATUS CARD
+                  // ==================================================
+
+                  Container(
+
+                    padding:
+                    const EdgeInsets.all(
+                      20,
+                    ),
+
+                    decoration:
+                    BoxDecoration(
+
+                      color:
+                      _monitoringStarted
+                          ? const Color(
+                        0xFFE8F5E9,
+                      )
+                          : const Color(
+                        0xFFFFF3E0,
+                      ),
+
+                      borderRadius:
+                      BorderRadius.circular(
+                        18,
+                      ),
+
+                      border:
+                      Border.all(
+
+                        color:
+                        _monitoringStarted
+                            ? const Color(
+                          0xFF66BB6A,
+                        )
+                            : const Color(
+                          0xFFFFA726,
+                        ),
+
+                        width: 1.5,
+                      ),
+                    ),
+
+                    child: Row(
+
+                      children: [
+
+                        // ------------------------------------------------
+                        // STATUS ICON
+                        // ------------------------------------------------
+
+                        Container(
+
+                          padding:
+                          const EdgeInsets.all(
+                            12,
+                          ),
+
+                          decoration:
+                          BoxDecoration(
+
+                            color:
+                            _monitoringStarted
+                                ? const Color(
+                              0xFF66BB6A,
+                            )
+                                : const Color(
+                              0xFFFFA726,
+                            ),
+
+                            shape:
+                            BoxShape.circle,
+                          ),
+
+                          child:
+                          _isStartingMonitoring
+
+                              ? const SizedBox(
+
+                            width: 22,
+
+                            height: 22,
+
+                            child:
+                            CircularProgressIndicator(
+
+                              color:
+                              Colors.white,
+
+                              strokeWidth:
+                              2.5,
+                            ),
+                          )
+
+                              : Icon(
+
+                            _monitoringStarted
+                                ? Icons
+                                .bluetooth_searching
+                                : Icons
+                                .bluetooth_disabled,
+
+                            color:
+                            Colors.white,
+
+                            size: 22,
+                          ),
+                        ),
+
+                        const SizedBox(
+                          width: 16,
+                        ),
+
+                        // ------------------------------------------------
+                        // STATUS TEXT
+                        // ------------------------------------------------
+
+                        Expanded(
+
+                          child: Column(
+
+                            crossAxisAlignment:
+                            CrossAxisAlignment.start,
+
+                            children: [
+
+                              Text(
+
+                                _isStartingMonitoring
+                                    ? 'Starting...'
+                                    : _monitoringStarted
+                                    ? 'Active'
+                                    : 'Not Active',
+
+                                style:
+                                TextStyle(
+
+                                  fontWeight:
+                                  FontWeight.bold,
+
+                                  fontSize: 16,
+
+                                  color:
+                                  _monitoringStarted
+                                      ? const Color(
+                                    0xFF2E7D32,
+                                  )
+                                      : const Color(
+                                    0xFFE65100,
+                                  ),
+                                ),
+                              ),
+
+                              const SizedBox(
+                                height: 3,
+                              ),
+
+                              Text(
+
+                                _isStartingMonitoring
+                                    ? 'Requesting Bluetooth access...'
+                                    : _monitoringStarted
+                                    ? 'Listening for crash signals nearby'
+                                    : 'Crash monitoring is not running',
+
+                                style:
+                                TextStyle(
+
+                                  color:
+                                  _monitoringStarted
+                                      ? const Color(
+                                    0xFF388E3C,
+                                  )
+                                      : const Color(
+                                    0xFFE65100,
+                                  ),
+
+                                  fontSize: 13,
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+
+                  const SizedBox(
+                    height: 12,
+                  ),
+
+                  // ==================================================
+                  // START MONITORING
+                  // ==================================================
+
+                  if (!_monitoringStarted &&
+                      !_isStartingMonitoring)
+
+                    OutlinedButton.icon(
+
+                      onPressed:
+                      _restartMonitoring,
+
+                      icon: const Icon(
+                        Icons.refresh,
+                      ),
+
+                      label: const Text(
+                        'Start Crash Monitoring',
+                      ),
+
+                      style:
+                      OutlinedButton
+                          .styleFrom(
+
+                        padding:
+                        const EdgeInsets
+                            .symmetric(
+                          vertical: 13,
+                        ),
+
+                        shape:
+                        RoundedRectangleBorder(
+                          borderRadius:
+                          BorderRadius.circular(
+                            14,
+                          ),
+                        ),
+                      ),
+                    ),
+
+                  const SizedBox(
+                    height: 24,
+                  ),
+
+                  // ==================================================
+                  // QUICK ACTIONS
+                  // ==================================================
+
+                  const Text(
+                    'Quick Actions',
+
+                    style: TextStyle(
+                      fontSize: 18,
+                      fontWeight:
+                      FontWeight.bold,
+                    ),
+                  ),
+
+                  const SizedBox(
+                    height: 12,
+                  ),
+
+                  // ==================================================
+                  // SINGLE TEST CRASH BUTTON
+                  // ==================================================
+
+                  const CrashTestButton(),
+
+                  const SizedBox(
+                    height: 12,
+                  ),
+
+                  // ==================================================
+                  // FIRST AID + DND
+                  // ==================================================
+
+                  Row(
+
+                    children: [
+
+                      // ------------------------------------------------
+                      // FIRST AID
+                      // ------------------------------------------------
+
+                      Expanded(
+
+                        child:
+                        _ActionCard(
+
+                          icon:
+                          Icons.medical_services,
+
+                          label:
+                          'First Aid\nGuidance',
+
+                          color:
+                          const Color(
+                            0xFF26A69A,
+                          ),
+
+                          onTap:
+                          _openFirstAid,
+                        ),
+                      ),
+
+                      const SizedBox(
+                        width: 8,
+                      ),
+                      Expanded(
+                        child: _ActionCard(
+                          icon: Icons.bluetooth_searching,
+                          label: 'BLE\nHardware',
+                          color: const Color(0xFF00897B),
+                          onTap: () {
+                            Navigator.push(
+                              context,
+                              MaterialPageRoute(
+                                builder: (_) =>
+                                const BleScannerScreen(),
+                              ),
+                            );
+                          },
+                        ),
+                      ),
+
+                      // ------------------------------------------------
+                      // DND
+                      // ------------------------------------------------
+
+                      Expanded(
+
+                        child:
+                        _ActionCard(
+
+                          icon:
+                          Icons
+                              .notifications_active,
+
+                          label:
+                          'Enable DND\nBypass Access',
+
+                          color:
+                          const Color(
+                            0xFF5C6BC0,
+                          ),
+
+                          onTap: () =>
+                              NotificationService
+                                  .openDndSettings(),
+                        ),
+                      ),
+                    ],
+                  ),
+
+                  const SizedBox(
+                    height: 24,
+                  ),
+
+                  // ==================================================
+                  // AI INFORMATION CARD
+                  // ==================================================
+
+                  Container(
+
+                    padding:
+                    const EdgeInsets.all(
+                      18,
+                    ),
+
+                    decoration:
+                    BoxDecoration(
+
+                      gradient:
+                      const LinearGradient(
+                        colors: [
+                          Color(0xFFEDE7F6),
+                          Color(0xFFF3E5F5),
+                        ],
+                      ),
+
+                      borderRadius:
+                      BorderRadius.circular(
+                        18,
+                      ),
+
+                      border:
+                      Border.all(
+                        color:
+                        const Color(
+                          0xFFB39DDB,
+                        ),
+                      ),
+                    ),
+
+                    child: Row(
+
+                      children: [
+
+                        Container(
+
+                          padding:
+                          const EdgeInsets.all(
+                            12,
+                          ),
+
+                          decoration:
+                          const BoxDecoration(
+
+                            color:
+                            Color(
+                              0xFF673AB7,
+                            ),
+
+                            shape:
+                            BoxShape.circle,
+                          ),
+
+                          child: const Icon(
+
+                            Icons.psychology,
+
+                            color:
+                            Colors.white,
+
+                            size: 26,
+                          ),
+                        ),
+
+                        const SizedBox(
+                          width: 14,
+                        ),
+
+                        Expanded(
+
+                          child: Column(
+
+                            crossAxisAlignment:
+                            CrossAxisAlignment.start,
+
+                            children: [
+
+                              const Text(
+
+                                'Offline AI Crash Detection',
+
+                                style:
+                                TextStyle(
+
+                                  fontWeight:
+                                  FontWeight.bold,
+
+                                  fontSize: 15,
+
+                                  color:
+                                  Color(
+                                    0xFF4527A0,
+                                  ),
+                                ),
+                              ),
+
+                              const SizedBox(
+                                height: 4,
+                              ),
+
+                              Text(
+
+                                _mlService.isReady
+                                    ? 'AI model ready — works without Internet'
+                                    : 'Loading AI model...',
+
+                                style:
+                                const TextStyle(
+
+                                  fontSize: 12,
+
+                                  color:
+                                  Color(
+                                    0xFF5E35B1,
+                                  ),
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+
+                        if (!_mlService.isReady)
+
+                          const SizedBox(
+
+                            width: 18,
+
+                            height: 18,
+
+                            child:
+                            CircularProgressIndicator(
+                              strokeWidth: 2,
+                            ),
+                          ),
+                      ],
+                    ),
+                  ),
+
+                  const SizedBox(
+                    height: 24,
+                  ),
+
+                  // ==================================================
+                  // HOW IT WORKS
+                  // ==================================================
+
+                  const Text(
+                    'How It Works',
+
+                    style: TextStyle(
+                      fontSize: 18,
+                      fontWeight:
+                      FontWeight.bold,
+                    ),
+                  ),
+
+                  const SizedBox(
+                    height: 12,
+                  ),
+
+                  const _StepTile(
+
+                    icon:
+                    Icons.sensors,
+
+                    color:
+                    Color(0xFF42A5F5),
+
+                    text:
+                    'Vehicle sensors detect a crash impact',
+                  ),
+
+                  const _StepTile(
+
+                    icon:
+                    Icons.psychology,
+
+                    color:
+                    Color(0xFF673AB7),
+
+                    text:
+                    'Offline AI analyzes acceleration, gyroscope, speed and motion intensity',
+                  ),
+
+                  const _StepTile(
+
+                    icon:
+                    Icons.gps_fixed,
+
+                    color:
+                    Color(0xFF7E57C2),
+
+                    text:
+                    'GPS module provides the crash location',
+                  ),
+
+                  const _StepTile(
+
+                    icon:
+                    Icons.bluetooth,
+
+                    color:
+                    Color(0xFF26A69A),
+
+                    text:
+                    'Nearby phones receive the crash signal via Bluetooth',
+                  ),
+
+                  const _StepTile(
+
+                    icon:
+                    Icons.notifications_active,
+
+                    color:
+                    Color(0xFFEF5350),
+
+                    text:
+                    'Foreground monitoring keeps listening outside the app',
+                  ),
+
+                  const _StepTile(
+
+                    icon:
+                    Icons.campaign,
+
+                    color:
+                    Color(0xFFFF7043),
+
+                    text:
+                    'Bystanders receive an immediate crash alert',
+                  ),
+
+                  const _StepTile(
+
+                    icon:
+                    Icons.medical_services,
+
+                    color:
+                    Color(0xFF66BB6A),
+
+                    text:
+                    'Bystanders get First Aid guidance and emergency assistance',
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+// ================================================================
+// ACTION CARD
+// ================================================================
+
+class _ActionCard
+    extends StatelessWidget {
+
+  final IconData icon;
+
+  final String label;
+
+  final Color color;
+
+  final VoidCallback onTap;
+
+  const _ActionCard({
+
+    required this.icon,
+
+    required this.label,
+
+    required this.color,
+
+    required this.onTap,
+  });
+
+  @override
+  Widget build(
+      BuildContext context,
+      ) {
+
+    return Material(
+
+      color: color,
+
+      borderRadius:
+      BorderRadius.circular(
+        16,
+      ),
+
+      child: InkWell(
+
+        borderRadius:
+        BorderRadius.circular(
+          16,
+        ),
+
+        onTap: onTap,
+
+        child: Padding(
+
+          padding:
+          const EdgeInsets.symmetric(
+            vertical: 18,
+            horizontal: 8,
+          ),
+
+          child: Column(
+
+            children: [
+
+              Icon(
+                icon,
+
+                color:
+                Colors.white,
+
+                size: 28,
+              ),
+
+              const SizedBox(
+                height: 8,
+              ),
+
+              Text(
+
+                label,
+
+                textAlign:
+                TextAlign.center,
+
+                style:
+                const TextStyle(
+
+                  color:
+                  Colors.white,
+
+                  fontWeight:
+                  FontWeight.bold,
+
+                  fontSize: 12,
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+// ================================================================
+// HOW IT WORKS STEP
+// ================================================================
+
+class _StepTile
+    extends StatelessWidget {
+
+  final IconData icon;
+
+  final Color color;
+
+  final String text;
+
+  const _StepTile({
+
+    required this.icon,
+
+    required this.color,
+
+    required this.text,
+  });
+
+  @override
+  Widget build(
+      BuildContext context,
+      ) {
+
+    return Padding(
+
+      padding:
+      const EdgeInsets.only(
+        bottom: 10,
+      ),
+
+      child: Row(
+
+        children: [
+
+          Container(
+
+            padding:
+            const EdgeInsets.all(
+              10,
+            ),
+
+            decoration:
+            BoxDecoration(
+
+              color:
+              color.withValues(
+                alpha: 0.15,
+              ),
+
+              shape:
+              BoxShape.circle,
+            ),
+
+            child: Icon(
+
+              icon,
+
+              color:
+              color,
+
+              size: 20,
+            ),
+          ),
+
+          const SizedBox(
+            width: 14,
+          ),
+
+          Expanded(
+
+            child: Text(
+
+              text,
+
+              style:
+              const TextStyle(
+                fontSize: 14,
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
